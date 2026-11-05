@@ -19,6 +19,8 @@ jobs:
           node-version: '22'
       - name: Test standalone generator offline
         run: npm test
+      - name: Test agent dispatch policy offline
+        run: node --test tests/agent-dispatch.test.cjs
       - name: Verify deterministic dry-run
         run: |
           node generate.mjs --config examples/minimal.json --output-root /tmp/saas-factory-dry-run > /tmp/factory-manifest.json
