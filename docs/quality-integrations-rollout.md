@@ -6,7 +6,7 @@
 - `.github/workflows/saas-factory-agent-dispatch.yml` already schedules assignment every 30 minutes; keep approval, two-active-agent and file-scope guards.
 - `docs/agent-orchestration.md` describes dispatch reports; open Copilot PR **#7** implements **six-hour read-only operational reports** in `.github/workflows/saas-factory-agent-report.yml`, `.github/scripts/agent-report.cjs`, `tests/agent-report.test.cjs`, `package.json`, and `docs/agent-orchestration.md`. Do not duplicate or edit these files before #7 is reviewed and merged.
 - Open issue **#6** is already approved for bounded CI recovery (maximum two attempts); don't add a competing retry workflow.
-- No Renovate, Codecov, SonarQube integration configuration or coverage upload workflow existed on main when this branch was started.
+- No Renovate, Codecov integration configuration or coverage upload workflow existed on main when this branch was started.
 
 ## 1. Copilot automatic reviews — OWNER ACTION REQUIRED
 
@@ -37,9 +37,9 @@ To enable optional Codecov uploading:
 3. Set Actions repository variable `CODECOV_ENABLED=true` **after** reviewing terms and permissions.
 4. Inspect checks on a harmless PR; remove the variable to stop third-party uploading.
 
-## 5. SonarQube Cloud (chosen instead of Snyk) — OWNER ACTION REQUIRED
+## 5. SonarQube Cloud — REMOVED BY OWNER DECISION
 
-SonarQube Cloud is the **single** additional code analyzer selected to avoid stacking overlapping scanners. The `sonar` job is **off** unless all repository variables `SONAR_ENABLED=true`, `SONAR_PROJECT_KEY`, `SONAR_ORGANIZATION` are set. Configure the SonarQube Cloud project, authorize GitHub integration if needed, add Actions secret `SONAR_TOKEN`, then set the variables. Leave disabled until approved. Check subscription limits for private repositories. No external scanning is executed before opt-in.
+SonarQube / Snyk are not part of this integration batch. No SonarQube action, token, variable, external enrollment or scan is requested. Do not activate either tool without a separate owner request.
 
 ## 6. Missions and failure reports — ALREADY BEING BUILT
 
@@ -49,6 +49,10 @@ Review and merge Copilot **PR #7** separately, after successful checks and human
 
 1. Inspect the diff and confirm no overlap with PR #7 or issue #6.
 2. Verify `SaaS Factory CI` on this exact head SHA.
-3. Verify the extra quality workflow reports a nonempty LCOV artifact with both optional integrations **skipped** by default.
-4. Review privileges, dependency updater cadence and third-party costs.
+3. Verify the extra quality workflow reports a nonempty LCOV artifact with optional Codecov upload **skipped** by default.
+4. Review privileges, dependency updater cadence and third-party costs; SonarQube is explicitly excluded.
 5. Request human review and explicit owner approval; do not bypass required checks or merge automatically.
+
+## GitHub Projects delivery status
+
+A GitHub Projects v2 board is a GitHub account-level resource, not a repository file. The current repository connector has no Projects creation/edit API permission. Therefore no board has been created. Use [GitHub Projects](https://github.com/users/totorina47501-wq/projects) to create the private board. Its complete field and workflow specification is above; do not invent a project URL or claim the board exists. The agent dispatcher remains label-driven, not board-driven.
