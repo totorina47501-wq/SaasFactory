@@ -1,20 +1,23 @@
 # SaaS Factory
 
-A standalone, **neutral** SaaS project generator and agent workflow.
+Standalone SaaS generator, separate from any customer-facing product.
 
-This repository is independent from every application built with it. It does not contain a production database, service credentials, user data, brand assets, business rules, or deployment tokens.
+## Generate a new project
 
-## Scope
+Requires Node.js 22.12+; no installation, network connection or credentials are required for the generator.
 
-- Generate a minimal Next.js / TypeScript application from a validated JSON manifest.
-- Default to dry-run. Writing requires explicit `--write` and a new, empty destination.
-- Test the generator offline and never deploy or provision paid providers automatically.
-- Keep new SaaS applications in **separate repositories**.
+```sh
+npm test
+node generate.mjs --config examples/minimal.json --output-root /tmp/saas-factory-demo
+node generate.mjs --config examples/minimal.json --output-root /tmp/saas-factory-demo --write
+```
 
-## Safety
+The default is **dry-run**, with a deterministic manifest. Explicit `--write` creates one new project folder and refuses existing paths, path traversal and symlinks. No git repository, remote provider, payment or deployment is created.
 
-The generated application must not copy existing products, their secrets, proprietary content, production configuration or database migrations. All optional integrations remain off by default.
+A generated app is an independent Next.js/TypeScript starting point. It comes with a basic, non-deploying CI workflow and offline smoke tests; run `npm install` and `npm test` inside it before development. Cloudflare, auth, media and billing-test are optional scaffolds, not active services.
 
-Development continues through isolated PRs with CI and code review; never run unreviewed PR code with a privileged GitHub token.
+See [generator contract](docs/generator-contract.md). Security and scope constraints for agents are in [AGENTS.md](AGENTS.md).
 
-The generator and its instructions are being migrated into this repository. See the active pull requests for the implementation.
+## Repository policy
+
+This repository holds reusable infrastructure only. Do not copy any application-specific source, branding, user data, migrations, legal corpus or credentials here. Every generated app must live in its own repository. Never enable paid APIs, DNS, payments, migrations or deployments automatically.
