@@ -41,29 +41,3 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage/lcov.info
           fail_ci_if_error: true
-  sonar:
-    needs: coverage
-    # Intentionally OFF until owner creates credentials and explicitly opts in.
-    if: ${{ vars.SONAR_ENABLED == 'true' && vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORGANIZATION != '' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        with:
-          name: factory-coverage-${{ github.run_id }}
-          path: coverage
-      - name: SonarQube Cloud analysis (owner opt-in only)
-        uses: SonarSource/sonarqube-scan-action@v6
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        with:
-          args: >-
-            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
-            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
-            -Dsonar.host.url=https://sonarcloud.io
-            -Dsonar.sources=.
-            -Dsonar.exclusions=tests/**,examples/**,docs/**,coverage/**
-            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
