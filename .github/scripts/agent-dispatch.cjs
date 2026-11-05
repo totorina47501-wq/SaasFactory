@@ -41,6 +41,14 @@ module.exports = async ({github, context, core, fs}) => {
     // Protect against file ownership conflicts: declared paths are mandatory while PRs are open.
     const scope=(issue.body||'').match(/^Files:\s*(.+)$/im)?.[1]?.split(',').map(s=>s.trim()).filter(Boolean);
     if(!scope?.length){report.decision='blocked:missing-files-scope';report.blockers.push(`Issue #${issue.number} requires a 'Files: path1, path2' declaration`);return;}
+    for(const occupied of assigned){
+      if(occupied.number===issue.number) continue;
+      const owned=(occupied.body||'').match(/^Files:\s*(.+)$/im)?.[1]?.split(',').map(s=>s.trim()).filter(Boolean);
+      if(!owned?.length){report.decision='blocked:unknown-active-scope';report.blockers.push(`Active issue #${occupied.number} has no declared Files scope`);return;}
+      if(owned.some(s=>scope.some(t=>s===t || (s.endsWith('/')&&t.startsWith(s)) || (t.endsWith('/')&&s.startsWith(t))))){
+        report.decision='blocked:active-file-overlap';report.blockers.push(`Issue #${issue.number} overlaps active issue #${occupied.number}`);return;
+      }
+    }
     for(const p of prs){
       const files=await github.paginate(github.rest.pulls.listFiles,{owner,repo,pull_number:p.number,per_page:100});
       if(files.some(f=>scope.some(s=>f.filename===s || (s.endsWith('/')&&f.filename.startsWith(s))))){
