@@ -1,0 +1,35 @@
+name: SaaS Factory agent dispatch
+on:
+  schedule:
+    - cron: '0,30 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  actions: read
+concurrency:
+  group: saas-factory-dispatch
+  cancel-in-progress: false
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
+        env:
+          EXPECTED_REPO: totorina47501-wq/SaasFactory
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('node:fs');
+            const run = require('./.github/scripts/agent-dispatch.cjs');
+            await run({github, context, core, fs});
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-dispatch-report-${{ github.run_id }}
+          path: agent-dispatch-report.json
+          if-no-files-found: warn
+          retention-days: 30
