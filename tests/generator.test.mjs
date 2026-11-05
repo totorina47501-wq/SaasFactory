@@ -79,7 +79,7 @@ describe('SaaS Factory standalone generator', () => {
     assert.ok(result.files.includes('lib/billing-test.mjs'));
     assert.ok(result.files.includes('public/media-fixture.svg'));
     assert.ok(!readdirSync(dir).includes('.git'));
-    assert.match(execFileSync(process.execPath, ['--test'], { cwd: dir, encoding: 'utf8' }), /pass/);
+    assert.match(execFileSync(process.execPath, ['--test', 'tests/smoke.test.mjs'], { cwd: dir, encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined } }), /pass/);
     assert.throws(() => generate({}, true), /already exists/);
   });
 
