@@ -17,7 +17,7 @@ module.exports = async ({github, context, core, fs}) => {
     const has = (i,label)=>i.labels.some(l=>(typeof l==='string'?l:l.name)===label);
     const matches = (pr,i)=>new RegExp('(?:fixes|closes|resolves)\\s+#'+i.number+'\\b','i').test(pr.body||'') || (pr.body||'').includes('#'+i.number);
     // A Copilot-assigned issue holds capacity even before the corresponding PR opens.
-    const assigned = work.filter(i=>i.assignees.some(a=>/^(copilot|copilot-swe-agent)(\\[bot\\])?$/i.test(a.login)) ||
+    const assigned = work.filter(i=>i.assignees.some(a=>/^(copilot|copilot-swe-agent)(\[bot\])?$/i.test(a.login)) ||
       has(i,'agent:in-progress') || has(i,'agent:review') || has(i,'agent:blocked'));
     const active = new Set(assigned.map(i=>i.number));
     for(const p of prs) {
@@ -39,7 +39,7 @@ module.exports = async ({github, context, core, fs}) => {
     if(!candidates.length){report.decision='idle:no-approved-missions';return;}
     const issue=candidates[0];
     // Protect against file ownership conflicts: declared paths are mandatory while PRs are open.
-    const scope=(issue.body||'').match(/^Files:\\s*(.+)$/im)?.[1]?.split(',').map(s=>s.trim()).filter(Boolean);
+    const scope=(issue.body||'').match(/^Files:\s*(.+)$/im)?.[1]?.split(',').map(s=>s.trim()).filter(Boolean);
     if(!scope?.length){report.decision='blocked:missing-files-scope';report.blockers.push(`Issue #${issue.number} requires a 'Files: path1, path2' declaration`);return;}
     for(const p of prs){
       const files=await github.paginate(github.rest.pulls.listFiles,{owner,repo,pull_number:p.number,per_page:100});
@@ -54,7 +54,7 @@ module.exports = async ({github, context, core, fs}) => {
       agent_assignment:{target_repo:`${owner}/${repo}`,base_branch:'main'}
     });
     const result=await github.rest.issues.get({owner,repo,issue_number:issue.number});
-    if(!result.data.assignees.some(a=>/^(Copilot|copilot-swe-agent)(\\[bot\\])?$/i.test(a.login))) throw Error('Copilot assignment not confirmed by read-back');
+    if(!result.data.assignees.some(a=>/^(Copilot|copilot-swe-agent)(\[bot\])?$/i.test(a.login))) throw Error('Copilot assignment not confirmed by read-back');
     await github.rest.issues.addLabels({owner,repo,issue_number:issue.number,labels:['agent:in-progress']});
     report.decision=`assigned:#${issue.number}`;
   } catch(e) {
