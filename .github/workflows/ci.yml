@@ -24,3 +24,30 @@ jobs:
           node generate.mjs --config examples/minimal.json --output-root /tmp/saas-factory-dry-run > /tmp/factory-manifest.json
           test ! -e /tmp/saas-factory-dry-run
           node -e "const m=require('/tmp/factory-manifest.json');if(m.mode!=='dry-run'||m.files.length<10)process.exit(1)"
+  generated-app:
+    needs: generator
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate an isolated minimal project
+        run: node generate.mjs --config examples/minimal.json --output-root "$RUNNER_TEMP/generated" --write
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-generated-next-15.5.28-react-19.3.1-ts-5.9.3-v1
+      - name: Install generated project dependencies
+        working-directory: ${{ runner.temp }}/generated/atelier-exemple
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Test generated project
+        working-directory: ${{ runner.temp }}/generated/atelier-exemple
+        run: npm test
+      - name: Typecheck generated project
+        working-directory: ${{ runner.temp }}/generated/atelier-exemple
+        run: npm run typecheck
+      - name: Build generated project
+        working-directory: ${{ runner.temp }}/generated/atelier-exemple
+        run: npm run build

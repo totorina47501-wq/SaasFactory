@@ -14,7 +14,9 @@ node generate.mjs --config examples/minimal.json --output-root /tmp/saas-factory
 
 The default is **dry-run**, with a deterministic manifest. Explicit `--write` creates one new project folder and refuses existing paths, path traversal and symlinks. No git repository, remote provider, payment or deployment is created.
 
-A generated app is an independent Next.js/TypeScript starting point. It comes with a basic, non-deploying CI workflow and offline smoke tests; run `npm install` and `npm test` inside it before development. Cloudflare, auth, media and billing-test are optional scaffolds, not active services.
+A generated app is an independent Next.js/TypeScript starting point. GitHub Actions generates the minimal app in a temporary directory, installs its dependencies, and runs its `npm test`, `npm run typecheck`, and `npm run build` scripts. The minimal app pins Next.js 15.5.28, React and React DOM 19.3.1, TypeScript 5.9.3, `@types/node` 22.19.2, and `@types/react`/`@types/react-dom` 19.2.0. The optional Cloudflare scaffold pins `@opennextjs/cloudflare` 1.20.15.
+
+The offline generator tests run the generated smoke tests for every combination of the optional `api`, `auth`, `billing-test`, and `media` scaffolds, with both `none` and `cloudflare-opennext` targets. These option combinations are scaffold-tested only; they are not included in the full Next.js build job. Cloudflare configuration is not deployed or validated against a provider.
 
 See [generator contract](docs/generator-contract.md). Security and scope constraints for agents are in [AGENTS.md](AGENTS.md).
 
