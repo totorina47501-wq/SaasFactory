@@ -1,0 +1,64 @@
+name: SaaS Factory optional quality integrations
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: factory-quality-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate offline LCOV coverage
+        run: |
+          mkdir -p coverage
+          node --experimental-test-coverage --test \
+            --test-reporter=spec --test-reporter=lcov \
+            --test-reporter-destination=stdout \
+            --test-reporter-destination=coverage/lcov.info \
+            tests/generator.test.mjs tests/agent-dispatch.test.cjs
+          test -s coverage/lcov.info
+      - uses: actions/upload-artifact@v4
+        with:
+          name: factory-coverage-${{ github.run_id }}
+          path: coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 14
+      # No third-party action executes until owner enables this repository variable.
+      - name: Upload to Codecov (owner opt-in only)
+        if: ${{ vars.CODECOV_ENABLED == 'true' }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/lcov.info
+          fail_ci_if_error: true
+  sonar:
+    # Intentionally OFF until owner creates credentials and explicitly opts in.
+    if: ${{ vars.SONAR_ENABLED == 'true' && vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORGANIZATION != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: SonarQube Cloud analysis (owner opt-in only)
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >-
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+            -Dsonar.host.url=https://sonarcloud.io
+            -Dsonar.sources=.
+            -Dsonar.exclusions=tests/**,examples/**,docs/**,coverage/**
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
