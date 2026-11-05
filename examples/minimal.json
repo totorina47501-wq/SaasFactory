@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "productName": "Atelier Exemple",
+  "projectSlug": "atelier-exemple",
+  "domain": "atelier.example",
+  "modules": ["ai-disabled"],
+  "languages": ["fr-FR"],
+  "defaultLanguage": "fr-FR",
+  "deploymentTarget": "none"
+}

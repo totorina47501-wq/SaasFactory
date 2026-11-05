@@ -1,0 +1,26 @@
+name: SaaS Factory CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: saas-factory-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  generator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test standalone generator offline
+        run: npm test
+      - name: Verify deterministic dry-run
+        run: |
+          node generate.mjs --config examples/minimal.json --output-root /tmp/saas-factory-dry-run > /tmp/factory-manifest.json
+          test ! -e /tmp/saas-factory-dry-run
+          node -e "const m=require('/tmp/factory-manifest.json');if(m.mode!=='dry-run'||m.files.length<10)process.exit(1)"

@@ -1,0 +1,9 @@
+node_modules/
+coverage/
+.next/
+.open-next/
+.env
+.env.*
+!.env.example
+.dev.vars
+*.log
