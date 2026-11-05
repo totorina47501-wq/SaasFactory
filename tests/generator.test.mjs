@@ -83,6 +83,48 @@ describe('SaaS Factory standalone generator', () => {
     assert.throws(() => generate({}, true), /already exists/);
   });
 
+  it('smoke-tests every optional module combination and deployment target', () => {
+    const optionalModules = ['api', 'auth', 'billing-test', 'media'];
+    const smokeTests = [];
+    for (let mask = 0; mask < 2 ** optionalModules.length; mask += 1) {
+      const modules = [
+        'ai-disabled',
+        ...optionalModules.filter((_, index) => mask & (1 << index)),
+      ];
+      for (const deploymentTarget of ['none', 'cloudflare-opennext']) {
+        const outputRoot = path.join(temp, `combo-${mask}-${deploymentTarget}`);
+        const result = generateProject({
+          configText: configText({ modules, deploymentTarget }),
+          outputRoot,
+          write: true,
+        });
+        const dir = result.destination;
+        const expectedFiles = {
+          api: 'app/api/example/route.js',
+          auth: 'lib/auth.mjs',
+          'billing-test': 'lib/billing-test.mjs',
+          media: 'public/media-fixture.svg',
+        };
+        for (const [module, file] of Object.entries(expectedFiles)) {
+          assert.equal(result.files.includes(file), modules.includes(module), `${module} scaffold`);
+        }
+        assert.equal(result.files.includes('open-next.config.ts'), deploymentTarget === 'cloudflare-opennext');
+        const packageJson = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
+        assert.equal(Object.hasOwn(packageJson.dependencies, 'next'), true);
+        assert.equal(
+          Object.hasOwn(packageJson.devDependencies, '@opennextjs/cloudflare'),
+          deploymentTarget === 'cloudflare-opennext',
+        );
+        smokeTests.push(path.join(dir, 'tests/smoke.test.mjs'));
+      }
+    }
+
+    execFileSync(process.execPath, ['--test', ...smokeTests], {
+      encoding: 'utf8',
+      env: { ...process.env, NODE_TEST_CONTEXT: undefined },
+    });
+  });
+
   it('rejects symlinked output roots and case-colliding slugs', () => {
     const original = path.join(temp, 'actual');
     const symlink = path.join(temp, 'link');
