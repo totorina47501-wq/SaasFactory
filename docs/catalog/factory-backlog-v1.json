@@ -55,7 +55,8 @@
         "AGENTS.md",
         "docs/implementation-contracts.md",
         "docs/templates/implementation-contract.md",
-        ".github/agents/"
+        ".github/agents/",
+        "docs/catalog/factory-backlog-v1.json"
       ],
       "dependsOn": [],
       "acceptance": [

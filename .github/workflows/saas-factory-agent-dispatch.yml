@@ -31,6 +31,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/github-script@v7
+        name: Coordinate, review, merge, and dispatch from main
         env:
           EXPECTED_REPO: totorina47501-wq/SaasFactory
         with:
@@ -46,4 +47,3 @@ jobs:
           path: agent-dispatch-report.json
           if-no-files-found: warn
           retention-days: 30
-

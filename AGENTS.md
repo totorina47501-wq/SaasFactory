@@ -7,7 +7,7 @@
 - Reject unknown input fields, suspicious paths, symlinks, overwrite attempts, and potentially leaked secrets.
 - NEVER copy production secrets, brand assets, customer data, legal documents, proprietary business logic, DB migrations, Git histories or provider account IDs from any other repository.
 - No network API, paid AI provider, payment or remote deployment during generation or tests.
-- Make small isolated PRs, run `npm test` and ensure GitHub CI green. Never auto-merge code without review.
+- Make small isolated PRs, run `npm test` and ensure GitHub CI green. Human review remains the default. Full-auto is limited to missions explicitly authorized in `docs/catalog/factory-backlog-v1.json` and the guarded coordinator; require its verified final review and CI evidence, and never bypass branch protections.
 - Keep any generated Next.js app isolated from the factory repository, in a new destination with independent configuration.
 
 - The specialist catalog is in `docs/agent-orchestration.md` and `.github/agents/*.agent.md`. Use **one** explicit `agent:role:<profile>` label per approved mission; never guess or override role from a title or Projects Status. Specialists share the same nondeployment and review gates.
