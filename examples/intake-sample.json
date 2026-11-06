@@ -1,0 +1,47 @@
+{
+  "intakeVersion": 1,
+  "product": {
+    "name": "Workshop Scheduler",
+    "slug": "workshop-scheduler",
+    "domain": "workshop.example",
+    "summary": "Neutral demonstration SaaS for managing appointment requests."
+  },
+  "market": {
+    "audience": "Independent service providers",
+    "problem": "Manual scheduling creates delays",
+    "monetization": "Subscription idea; payments disabled"
+  },
+  "mvp": [
+    {
+      "id": "schedule",
+      "title": "Appointment requests",
+      "description": "Create and view synthetic appointment requests; no live accounts or external calendars.",
+      "priority": "p0",
+      "owner": "generator-engineer"
+    },
+    {
+      "id": "accessibility",
+      "title": "Accessible scheduling UX",
+      "description": "Keyboard-friendly neutral appointment interface.",
+      "priority": "p1",
+      "owner": "ux-accessibility"
+    }
+  ],
+  "scaffold": {
+    "modules": [
+      "ai-disabled",
+      "api",
+      "auth",
+      "billing-test"
+    ],
+    "languages": [
+      "fr-FR",
+      "en"
+    ],
+    "defaultLanguage": "fr-FR",
+    "deploymentTarget": "none"
+  },
+  "assumptions": [
+    "Product concept only: real database, auth provider and billing require separate implementation."
+  ]
+}
