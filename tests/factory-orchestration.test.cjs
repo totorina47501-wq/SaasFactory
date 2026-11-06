@@ -36,6 +36,7 @@ function orchestrationGithub({
   const calls = [];
   const detailedReads = [];
   const mergedPrs = [];
+  const pullReads = new Map();
   const issuesByNumber = new Map(issues.map(issue => [issue.number, issue]));
   const github = {
     paginate: async (method, args) => {
@@ -71,7 +72,10 @@ function orchestrationGithub({
         get: async args => {
           if (failDependency === args.pull_number) throw Error('partial API failure');
           detailedReads.push(args.pull_number);
-          if (detailedPrs[args.pull_number]) return {data: detailedPrs[args.pull_number]};
+          pullReads.set(args.pull_number, (pullReads.get(args.pull_number) || 0) + 1);
+          const detail = detailedPrs[args.pull_number];
+          if (typeof detail === 'function') return {data: detail(pullReads.get(args.pull_number))};
+          if (detail) return {data: detail};
           return {data: {
             merged: dependencyMerged[args.pull_number] === true,
             body: allPrs.find(pr => pr.number === args.pull_number)?.body
@@ -96,7 +100,7 @@ function orchestrationGithub({
       }}}
     })
   };
-  return {github, calls, detailedReads, mergedPrs};
+  return {github, calls, detailedReads, mergedPrs, pullReads};
 }
 
 async function runCoordinator(github, overrides = {}) {
@@ -207,12 +211,50 @@ test('issue dependency requires completed closure and a merged linked PR', async
   });
   assert.deepEqual((await runCoordinator(notPlanned.github)).promoted, []);
 
+  const staleCandidate = issue(task, {
+    labels: [{name: 'agent:planned'}, {name: `agent:role:${task.role}`}, {name: `priority:${task.priority}`}]
+  });
   const staleLink = orchestrationGithub({
-    issues: [candidate, completed, completedSecond], allPrs: [proof, secondProof],
-    dependencyMerged: {[proof.number]: true, [secondProof.number]: true},
-    detailedPrs: {[proof.number]: {merged: true, body: 'Closes #999'}}
+    issues: [staleCandidate, completed, completedSecond], allPrs: [proof, secondProof],
+    dependencyMerged: {[proof.number]: true, [secondProof.number]: true, 14: true},
+    detailedPrs: {[proof.number]: attempt => ({
+      merged: true, body: attempt === 1 ? `Closes #${parent.issue}` : 'Closes #999'
+    })}
   });
   assert.deepEqual((await runCoordinator(staleLink.github)).promoted, []);
+  assert.equal(staleLink.pullReads.get(proof.number), 2);
+});
+
+test('dependency verification memoizes shared issue subgraphs within a phase', async () => {
+  const task = (issueNumber, dependsOn = []) => ({
+    issue: issueNumber, key: `SFV3-${issueNumber}`, role: 'platform-engineer',
+    priority: 'p1', automationAuthorized: true, files: [`src/${issueNumber}.js`],
+    dependsOn, acceptance: ['verified']
+  });
+  const leaf = task(3);
+  const shared = task(2, [{kind: 'issue', number: 3, acceptance: 'catalog proof'}]);
+  const first = task(1, [{kind: 'issue', number: 2, acceptance: 'catalog proof'}]);
+  const second = task(4, [{kind: 'issue', number: 2, acceptance: 'catalog proof'}]);
+  const tasks = new Map([first, shared, leaf, second].map(value => [value.issue, value]));
+  const issues = new Map([
+    [2, issue(shared, {state: 'closed', state_reason: 'completed'})],
+    [3, issue(leaf, {state: 'closed', state_reason: 'completed'})]
+  ]);
+  const reads = [];
+  const github = {
+    rest: {issues: {get: async ({issue_number}) => {
+      reads.push(issue_number);
+      return {data: issues.get(issue_number)};
+    }}}
+  };
+  const cache = new Map();
+  for (const root of [first, second]) {
+    assert.equal(await orchestration.dependenciesReady({
+      github, owner: 'totorina47501-wq', repo: 'SaasFactory', task: root,
+      tasks, issuesByNumber: issues, allPrs: [], cache
+    }), true);
+  }
+  assert.deepEqual(reads, [2, 3]);
 });
 
 test('partial dependency API failure aborts before any promotion', async () => {
@@ -270,6 +312,62 @@ test('stale main catalog snapshots cannot promote or merge work', async () => {
   assert.deepEqual(calls, []);
 });
 
+test('dispatch candidate dependencies are refreshed before assignment', async () => {
+  const taskData = catalog();
+  const task = taskData.tasks.find(value => value.key === 'SFV3-REG');
+  const parent = taskData.tasks.find(value => value.issue === 17);
+  const secondParent = taskData.tasks.find(value => value.issue === 18);
+  const candidate = {...issue(task), assignees: []};
+  const completed = issue(parent, {state: 'closed', state_reason: 'completed'});
+  const completedSecond = issue(secondParent, {state: 'closed', state_reason: 'completed'});
+  const proof = {number: 80, body: 'Closes #17'};
+  const secondProof = {number: 81, body: 'Closes #18'};
+  const pullData = new Map([
+    [14, {number: 14, merged: true}],
+    [80, {number: 80, merged: true, body: 'Closes #17'}],
+    [81, {number: 81, merged: true, body: 'Closes #18'}]
+  ]);
+  const issueData = new Map([
+    [task.issue, candidate], [parent.issue, completed], [secondParent.issue, completedSecond]
+  ]);
+  const github = {
+    paginate: async method => {
+      if (method === github.rest.issues.listForRepo) return [...issueData.values()];
+      if (method === github.rest.pulls.list) return [proof, secondProof];
+      throw Error('unexpected paginate');
+    },
+    rest: {
+      repos: {getBranch: async () => ({data: {commit: {sha: mainSha}}})},
+      issues: {
+        listForRepo() {},
+        get: async ({issue_number}) => ({data: issueData.get(issue_number)})
+      },
+      pulls: {
+        list() {},
+        get: async ({pull_number}) => ({data: pullData.get(pull_number)})
+      }
+    }
+  };
+  const previous = process.env.EXPECTED_REPO;
+  process.env.EXPECTED_REPO = orchestration.REPOSITORY;
+  const context = {
+    repo: {owner: 'totorina47501-wq', repo: 'SaasFactory'},
+    ref: 'refs/heads/main', sha: mainSha
+  };
+  try {
+    assert.equal(await orchestration.revalidateDispatchCandidate({
+      github, context, issueNumber: task.issue
+    }), true);
+    pullData.set(80, {number: 80, merged: true, body: 'Closes #999'});
+    assert.equal(await orchestration.revalidateDispatchCandidate({
+      github, context, issueNumber: task.issue
+    }), false);
+  } finally {
+    if (previous === undefined) delete process.env.EXPECTED_REPO;
+    else process.env.EXPECTED_REPO = previous;
+  }
+});
+
 test('newest CI run wins regardless of an older run attempt number', async () => {
   const staleSuccess = mergeMocks({
     workflowRuns: [
@@ -309,6 +407,16 @@ test('newest CI run wins regardless of an older run attempt number', async () =>
   });
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(newestAttempt)), false);
   assert.equal(newestAttempt.calls.length, 0);
+
+  const rerunInProgress = mergeMocks({
+    lateWorkflowRuns: [{
+      id: 100, created_at: '2026-11-06T09:00:00Z', run_attempt: 2,
+      workflow_id: 12, head_sha: headSha, event: 'pull_request',
+      status: 'in_progress', conclusion: null
+    }]
+  });
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(rerunInProgress)), false);
+  assert.equal(rerunInProgress.calls.length, 0);
 });
 
 test('final issue reread must retain approval, role, file scope, and dependency metadata', async () => {
@@ -442,13 +550,14 @@ test('list summaries are detailed before a real-format COMMENTED review can auth
 function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflowId = 12,
   review = true, reviewBody, reviewHead = head, unresolved = false, changesRequested = false,
   pendingReviewRequest = false, lateReviewRequest = false, lateChangesRequested = false, changedFiles,
-  reportedChangedFiles, workflowRuns, finalIssue, finalIssueAfterFirstRead,
+  reportedChangedFiles, workflowRuns, lateWorkflowRuns, finalIssue, finalIssueAfterFirstRead,
   finalBase = mainSha, author = 'copilot-swe-agent[bot]', finalMain = mainSha,
   finalMainAfterFirstRead, finalState = 'open', reviewUser = 'copilot-pull-request-reviewer[bot]',
-  branch = 'copilot/task-17'} = {}) {
+  branch = 'copilot/task-17', prBody = 'Closes #17'} = {}) {
   const calls = [];
   let reviewRequestCalls = 0;
   let reviewCalls = 0;
+  let ciCalls = 0;
   let issueReadCalls = 0;
   let mainReadCalls = 0;
   const workflow = {id: 12, path: orchestration.REQUIRED_WORKFLOW.path, name: orchestration.REQUIRED_WORKFLOW.name};
@@ -465,7 +574,7 @@ function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflow
 ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}`;
   const pr = {
     number: 45,
-    body: 'Closes #17',
+    body: prBody,
     state: 'open',
     draft: false,
     merged: false,
@@ -480,11 +589,15 @@ ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}
   const github = {
     paginate: async (method) => {
       if (method === github.rest.pulls.listFiles) return fileEntries;
-      if (method === github.rest.actions.listWorkflowRuns) return workflowRuns || [{
-        id: 100, created_at: '2026-11-06T09:00:00Z',
-        workflow_id: ciWorkflowId, head_sha: head, event: 'pull_request',
-        status: 'completed', conclusion: 'success', run_attempt: 1
-      }];
+      if (method === github.rest.actions.listWorkflowRuns) {
+        ciCalls++;
+        if (ciCalls > 1 && lateWorkflowRuns) return lateWorkflowRuns;
+        return workflowRuns || [{
+          id: 100, created_at: '2026-11-06T09:00:00Z',
+          workflow_id: ciWorkflowId, head_sha: head, event: 'pull_request',
+          status: 'completed', conclusion: 'success', run_attempt: 1
+        }];
+      }
       if (method === github.rest.pulls.listReviews) {
         reviewCalls++;
         const requestsChanges = changesRequested || (lateChangesRequested && reviewCalls > 1);
@@ -595,6 +708,30 @@ test('rename sources are scope-checked but only destination paths require review
   });
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(outOfScopeRename)), false);
   assert.equal(outOfScopeRename.calls.length, 0);
+});
+
+test('closing-issue links reject extra or hidden references', async () => {
+  for (const body of [
+    'Fixes #17\nCloses https://github.com/totorina47501-wq/SaasFactory/issues/18',
+    'Fixes #17\nCloses totorina47501-wq/SaasFactory#18',
+    'Fixes #17\nCloses #18',
+    'Fixes #17\n<!--\n```\n-->\nCloses #18'
+  ]) {
+    const invalid = mergeMocks({prBody: body});
+    assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(invalid)), false);
+    assert.equal(invalid.calls.length, 0);
+  }
+
+  for (const body of [
+    'Fixes #17\n<!-- Closes #18 -->',
+    'Fixes #17\n\n```markdown\nCloses #18\n```',
+    'Fixes totorina47501-wq/SaasFactory#17',
+    'Fixes https://github.com/totorina47501-wq/SaasFactory/issues/17'
+  ]) {
+    const valid = mergeMocks({prBody: body});
+    assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(valid)), true);
+    assert.equal(valid.calls.length, 1);
+  }
 });
 
 test('new head SHA must have its own successful CI, review, and expected merge SHA', async () => {

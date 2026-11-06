@@ -67,6 +67,11 @@ module.exports = async ({github, context, core, fs, orchestration = factoryOrche
     }
     const specialist=roleLabels[0].slice('agent:role:'.length);
     report.specialist=specialist;
+    if(!await orchestration.revalidateDispatchCandidate({github,context,issueNumber:issue.number})){
+      report.decision='blocked:mission-no-longer-ready';
+      report.blockers.push(`Issue #${issue.number} failed the latest authorization or dependency check`);
+      return;
+    }
     // REST assignment support is in preview and GITHUB_TOKEN might lack authorization.
     // Do not mark success until GitHub confirms both assignee and read-back.
     await github.request('POST /repos/{owner}/{repo}/issues/{issue_number}/assignees',{

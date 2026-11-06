@@ -211,9 +211,56 @@ function taskMetadataMatches(task, issue, requireApproved = true) {
 }
 
 function linkedIssueNumbers(body) {
+  const lines = String(body || '').replace(/<!--[\s\S]*?(?:-->|$)/g, ' ').split(/\r?\n/);
+  const visible = [];
+  let fence = null;
+  for (const line of lines) {
+    const marker = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = null;
+      continue;
+    }
+    if (marker) {
+      fence = marker[1];
+      continue;
+    }
+    visible.push(line);
+  }
+  const text = visible.join('\n').replace(/`[^`\n]*`/g, ' ');
   const found = [];
-  const pattern = /\b(?:fixes|closes|resolves)\s+#(\d+)\b/gi;
-  for (const match of body.matchAll(pattern)) found.push(Number(match[1]));
+  const keywords = /\b(?:close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)\b/gi;
+  for (const match of text.matchAll(keywords)) {
+    const remainder = text.slice(match.index + match[0].length);
+    const candidate = remainder.match(/^\s+([^\s,;]+)/)?.[1]
+      ?.replace(/[).,;:!?]+$/g, '');
+    if (!candidate) {
+      found.push(-1);
+      continue;
+    }
+    const local = candidate.match(/^#([1-9]\d*)$/);
+    const qualified = candidate.match(/^([^/#]+\/[^#]+)#([1-9]\d*)$/);
+    let number = local ? Number(local[1]) : null;
+    if (qualified) {
+      if (qualified[1].toLowerCase() === REPOSITORY.toLowerCase()) number = Number(qualified[2]);
+      else number = -1;
+    } else if (!local && /^https?:\/\//i.test(candidate)) {
+      try {
+        const url = new URL(candidate);
+        const issueUrl = url.pathname.match(/^\/([^/]+)\/([^/]+)\/issues\/([1-9]\d*)\/?$/);
+        if (url.hostname.toLowerCase() === 'github.com' && !url.search && !url.hash && issueUrl &&
+          `${issueUrl[1]}/${issueUrl[2]}`.toLowerCase() === REPOSITORY.toLowerCase()) {
+          number = Number(issueUrl[3]);
+        } else {
+          number = -1;
+        }
+      } catch {
+        number = -1;
+      }
+    } else if (!local && !qualified) {
+      number = -1;
+    }
+    found.push(Number.isSafeInteger(number) && number > 0 ? number : -1);
+  }
   return found;
 }
 
@@ -234,51 +281,108 @@ function safeApiError() {
   return new Error('Orchestration API failed closed; no additional action was taken');
 }
 
-async function dependenciesReady({github, owner, repo, task, tasks, issuesByNumber, allPrs, cache, stack = new Set()}) {
+async function dependenciesReady({
+  github, owner, repo, task, tasks, issuesByNumber, allPrs, cache = new Map(), stack = new Set()
+}) {
   if (stack.has(task.issue)) throw new Error('Catalog dependency cycle');
+  const readyKey = `ready:${task.issue}`;
+  if (cache.has(readyKey)) return cache.get(readyKey);
   stack.add(task.issue);
-  for (const dependency of task.dependsOn) {
-    if (dependency.kind === 'pull_request') {
-      const key = `pr:${dependency.number}`;
-      if (!cache.has(key)) {
-        const result = await github.rest.pulls.get({owner, repo, pull_number: dependency.number});
-        cache.set(key, result.data);
+  let ready = true;
+  try {
+    for (const dependency of task.dependsOn) {
+      if (dependency.kind === 'pull_request') {
+        const key = `pr:${dependency.number}`;
+        if (!cache.has(key)) {
+          const result = await github.rest.pulls.get({owner, repo, pull_number: dependency.number});
+          cache.set(key, result.data);
+        }
+        if (cache.get(key).merged !== true) {
+          ready = false;
+          break;
+        }
+        continue;
       }
-      if (cache.get(key).merged !== true) return false;
-      continue;
-    }
 
-    const dependencyTask = tasks.get(dependency.number);
-    if (!dependencyTask || !issuesByNumber.has(dependency.number)) return false;
-    const issueResult = await github.rest.issues.get({owner, repo, issue_number: dependency.number});
-    const issue = issueResult.data;
-    if (issue.state !== 'closed' || issue.state_reason !== 'completed' ||
-      !taskMetadataMatches(dependencyTask, issue)) return false;
-    if (!await dependenciesReady({
-      github, owner, repo, task: dependencyTask, tasks, issuesByNumber, allPrs, cache, stack
-    })) return false;
-
-    if (typeof dependency.acceptance === 'string' && dependency.acceptance.trim()) continue;
-    const linked = allPrs.filter(pr => linkedIssueNumbers(pr.body || '').includes(dependency.number));
-    let mergedProof = false;
-    for (const pr of linked) {
-      const key = `pr:${pr.number}`;
-      if (!cache.has(key)) {
-        const result = await github.rest.pulls.get({owner, repo, pull_number: pr.number});
-        cache.set(key, result.data);
+      const dependencyTask = tasks.get(dependency.number);
+      if (!dependencyTask || !issuesByNumber.has(dependency.number)) {
+        ready = false;
+        break;
       }
-      const mergedPr = cache.get(key);
-      const linkedIssues = linkedIssueNumbers(mergedPr.body || '');
-      if (mergedPr.merged === true && linkedIssues.length === 1 &&
-        linkedIssues[0] === dependency.number) {
-        mergedProof = true;
+      const issueKey = `issue:${dependency.number}`;
+      if (!cache.has(issueKey)) {
+        const issueResult = await github.rest.issues.get({owner, repo, issue_number: dependency.number});
+        cache.set(issueKey, issueResult.data);
+      }
+      const issue = cache.get(issueKey);
+      if (issue.state !== 'closed' || issue.state_reason !== 'completed' ||
+        !taskMetadataMatches(dependencyTask, issue) ||
+        !await dependenciesReady({
+          github, owner, repo, task: dependencyTask, tasks, issuesByNumber, allPrs, cache, stack
+        })) {
+        ready = false;
+        break;
+      }
+
+      if (typeof dependency.acceptance === 'string' && dependency.acceptance.trim()) continue;
+      const linked = allPrs.filter(pr => linkedIssueNumbers(pr.body || '').includes(dependency.number));
+      let mergedProof = false;
+      for (const pr of linked) {
+        const key = `pr:${pr.number}`;
+        if (!cache.has(key)) {
+          const result = await github.rest.pulls.get({owner, repo, pull_number: pr.number});
+          cache.set(key, result.data);
+        }
+        const mergedPr = cache.get(key);
+        const linkedIssues = linkedIssueNumbers(mergedPr.body || '');
+        if (mergedPr.merged === true && linkedIssues.length === 1 &&
+          linkedIssues[0] === dependency.number) {
+          mergedProof = true;
+          break;
+        }
+      }
+      if (!mergedProof) {
+        ready = false;
         break;
       }
     }
-    if (!mergedProof) return false;
+  } finally {
+    stack.delete(task.issue);
   }
-  stack.delete(task.issue);
-  return true;
+  cache.set(readyKey, ready);
+  return ready;
+}
+
+async function revalidateDispatchCandidate({github, context, issueNumber, io = fs}) {
+  try {
+    const {owner, repo} = context.repo;
+    assert(`${owner}/${repo}` === REPOSITORY && context.ref === 'refs/heads/main' &&
+      process.env.EXPECTED_REPO === REPOSITORY, 'Dispatch source guard rejected');
+    const catalog = JSON.parse(io.readFileSync(CATALOG_PATH, 'utf8'));
+    const tasks = validateCatalog(catalog);
+    const task = catalog.tasks.find(candidate => candidate.issue === issueNumber);
+    if (!task) return false;
+    const [main, issueResult, issues, allPrs] = await Promise.all([
+      github.rest.repos.getBranch({owner, repo, branch: 'main'}),
+      github.rest.issues.get({owner, repo, issue_number: issueNumber}),
+      github.paginate(github.rest.issues.listForRepo, {owner, repo, state: 'all', per_page: 100}),
+      github.paginate(github.rest.pulls.list, {owner, repo, state: 'all', per_page: 100})
+    ]);
+    assert(main.data.commit?.sha === context.sha, 'Main advanced beyond the trusted catalog snapshot');
+    const currentIssue = issueResult.data;
+    const labels = names(currentIssue.labels);
+    if (!Array.isArray(currentIssue.assignees) || currentIssue.assignees.length ||
+      labels.includes('agent:in-progress') || labels.includes('agent:review') ||
+      !taskMatchesAuthorizedIssue(task, currentIssue)) return false;
+    return dependenciesReady({
+      github, owner, repo, task, tasks,
+      issuesByNumber: new Map(issues.filter(issue => !issue.pull_request)
+        .map(issue => [issue.number, issue])),
+      allPrs, cache: new Map()
+    });
+  } catch {
+    throw safeApiError();
+  }
 }
 
 async function loadWorkflow(github, owner, repo) {
@@ -462,6 +566,7 @@ async function mergeEligiblePullRequest({
   }) || !await trustedReview({
     github, owner, repo, pr: finalPr.data, changedFiles: reviewedFiles, headSha: pr.head.sha
   })) return false;
+  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha)) return false;
   const result = await github.rest.pulls.merge({
     owner, repo, pull_number: pr.number, merge_method: 'merge', sha: pr.head.sha
   });
@@ -515,7 +620,7 @@ async function run({github, context, core, io = fs}) {
       if (!taskMatchesIssue(task, current.data) ||
         !await dependenciesReady({
           github, owner, repo, task, tasks, issuesByNumber: new Map(workIssues.map(item => [item.number, item])),
-          allPrs, cache: dependencyCache
+            allPrs, cache: new Map()
         })) continue;
       const labels = names(current.data.labels).filter(label => label !== 'agent:planned');
       if (!labels.includes('agent:approved')) labels.push('agent:approved');
@@ -582,5 +687,6 @@ async function run({github, context, core, io = fs}) {
 
 module.exports = {
   run, validateCatalog, taskMatchesIssue, issueDependencies, pathAllowed,
-  mergeEligiblePullRequest, retryAllowed, CONTRACT_VERSION: 1, REQUIRED_WORKFLOW, REPOSITORY
+  mergeEligiblePullRequest, dependenciesReady, revalidateDispatchCandidate,
+  retryAllowed, CONTRACT_VERSION: 1, REQUIRED_WORKFLOW, REPOSITORY
 };

@@ -34,7 +34,8 @@ async function exercise(issues=[],prs=[],opts={}){
  const writes=[];
  const core={summary:{addHeading(){return this},addRaw(){return this},async write(){}},notice(){}};
  const context={repo:{owner:'totorina47501-wq',repo:'SaasFactory'},sha:'test',runId:1};
- try{await dispatch({github,context,core,orchestration:opts.orchestration||{run:async()=>({decision:'idle'})},fs:{writeFileSync:(p,v)=>writes.push(JSON.parse(v))}});}
+ const orchestration={run:async()=>({decision:'idle'}),revalidateDispatchCandidate:async()=>true,...opts.orchestration};
+ try{await dispatch({github,context,core,orchestration,fs:{writeFileSync:(p,v)=>writes.push(JSON.parse(v))}});}
  catch(e){if(!opts.fail)throw e;}
  finally{if(previous===undefined)delete process.env.EXPECTED_REPO;else process.env.EXPECTED_REPO=previous}
  return {calls,report:writes.at(-1),order};
@@ -47,6 +48,13 @@ test('coordinator runs before issue selection',async()=>{
  });
  assert.deepEqual(order.slice(0,2),['coordinate','github']);
  assert.equal(x.report.orchestration.decision,'idle');
+});
+test('candidate dependencies and authorization are revalidated before assignment',async()=>{
+ const x=await exercise([issue(8,['agent:approved','agent:role:qa-engineer'])],[],{
+  orchestration:{revalidateDispatchCandidate:async()=>false}
+ });
+ assert.equal(x.report.decision,'blocked:mission-no-longer-ready');
+ assert.equal(x.calls.length,0);
 });
 test('dispatcher omits raw operation errors from reports',async()=>{
  const x=await exercise([],[],{
