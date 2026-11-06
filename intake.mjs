@@ -20,7 +20,7 @@ function keys(obj,expected,context){
  if(extra.length||missing.length)throw Error(context+' keys invalid: extra='+extra.join(',')+' missing='+missing.join(','));
 }
 function string(v,name,max=500){
- if(typeof v!=='string'||!v.trim()||v.length>max||/[\\u0000-\\u001f\\u007f]/u.test(v))throw Error(name+' must be a nonempty printable string of at most '+max+' characters');
+ if(typeof v!=='string'||!v.trim()||v.length>max||/[\x00-\x1f\x7f]/u.test(v))throw Error(name+' must be a nonempty printable string of at most '+max+' characters');
  return v.trim();
 }
 function verifyIntake(raw){
