@@ -11,6 +11,10 @@ module.exports = async ({github, context, core, fs, orchestration = factoryOrche
   };
   try {
     report.orchestration = await orchestration.run({github, context, core});
+    if (report.orchestration.merged?.length) {
+      report.decision='deferred:main-advanced';
+      return; // Next pass must load the newly merged trusted catalog and code.
+    }
     const [issues, prs] = await Promise.all([
       github.paginate(github.rest.issues.listForRepo,{owner,repo,state:'open',per_page:100}),
       github.paginate(github.rest.pulls.list,{owner,repo,state:'open',per_page:100})
@@ -67,7 +71,7 @@ module.exports = async ({github, context, core, fs, orchestration = factoryOrche
     }
     const specialist=roleLabels[0].slice('agent:role:'.length);
     report.specialist=specialist;
-    if(!await orchestration.revalidateDispatchCandidate({github,context,issueNumber:issue.number})){
+    if(!await orchestration.revalidateDispatchCandidate({github,context,issueNumber:issue.number,candidate:issue})){
       report.decision='blocked:mission-no-longer-ready';
       report.blockers.push(`Issue #${issue.number} failed the latest authorization or dependency check`);
       return;

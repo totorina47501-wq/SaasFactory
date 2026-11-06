@@ -49,6 +49,13 @@ test('coordinator runs before issue selection',async()=>{
  assert.deepEqual(order.slice(0,2),['coordinate','github']);
  assert.equal(x.report.orchestration.decision,'idle');
 });
+test('a merge defers assignment until a new pass reads the new main SHA',async()=>{
+ const order=[];
+ const x=await exercise([],[],{order,orchestration:{run:async()=>({decision:'merged',merged:[45]})}});
+ assert.equal(x.report.decision,'deferred:main-advanced');
+ assert.equal(order.length,0);
+ assert.equal(x.calls.length,0);
+});
 test('candidate dependencies and authorization are revalidated before assignment',async()=>{
  const x=await exercise([issue(8,['agent:approved','agent:role:qa-engineer'])],[],{
   orchestration:{revalidateDispatchCandidate:async()=>false}

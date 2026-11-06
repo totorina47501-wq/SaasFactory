@@ -11,6 +11,23 @@ const catalog = () => JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
 const mainSha = 'b'.repeat(40);
 const headSha = 'a'.repeat(40);
 
+test('GitHub closing references are authoritative for hidden or additional missions',async()=>{
+  for(const [prBody,actualClosingIssues] of [['Fixes #17\n`Closes #18',[17,18]],['    Fixes #17',[]]]){
+    const state=mergeMocks({prBody,actualClosingIssues});
+    assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(state)),false);
+  }
+});
+
+test('newer review IDs break equal-timestamp verdict ties',async()=>{
+  const state=mergeMocks(), paginate=state.github.paginate;
+  state.github.paginate=async(method,args)=>{
+    const values=await paginate(method,args);
+    if(method!==state.github.rest.pulls.listReviews)return values;
+    return [...values,{...values[0],id:9,body:'Changes recommended'}];
+  };
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(state)),false);
+});
+
 test('visible closure links survive fenced HTML markers and ordinary prose is ignored',async()=>{
   const hiddenMarker=mergeMocks({prBody:'Fixes #17\n```text\n<!--\n```\nCloses #18'});
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(hiddenMarker)),false);
@@ -140,7 +157,7 @@ function orchestrationGithub({
       }
     },
     graphql: async () => ({
-      repository: {pullRequest: {reviewThreads: {
+      repository: {pullRequest: {headRefOid: headSha, closingIssuesReferences: {nodes:[{number:17,repository:{nameWithOwner:orchestration.REPOSITORY}}],pageInfo:{hasNextPage:false}}, reviewThreads: {
         nodes: reviewThreads, pageInfo: {hasNextPage: false, endCursor: null}
       }}}
     })
@@ -403,6 +420,9 @@ test('dispatch candidate dependencies are refreshed before assignment', async ()
     assert.equal(await orchestration.revalidateDispatchCandidate({
       github, context, issueNumber: task.issue
     }), true);
+    assert.equal(await orchestration.revalidateDispatchCandidate({
+      github, context, issueNumber: task.issue, candidate: {...candidate,body:'Files: unauthorized/\nDepends-On: none'}
+    }), false);
     pullData.set(80, {number: 80, merged: true, body: 'Closes #999'});
     assert.equal(await orchestration.revalidateDispatchCandidate({
       github, context, issueNumber: task.issue
@@ -598,7 +618,7 @@ function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflow
   reportedChangedFiles, workflowRuns, lateWorkflowRuns, finalIssue, finalIssueAfterFirstRead,
   finalBase = mainSha, author = 'copilot-swe-agent[bot]', finalMain = mainSha,
   finalMainAfterFirstRead, finalState = 'open', reviewUser = 'copilot-pull-request-reviewer[bot]',
-  branch = 'copilot/task-17', prBody = 'Closes #17'} = {}) {
+  branch = 'copilot/task-17', prBody = 'Closes #17', actualClosingIssues = [17]} = {}) {
   const calls = [];
   let reviewRequestCalls = 0;
   let reviewCalls = 0;
@@ -657,7 +677,7 @@ ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}
       throw Error('unexpected paginate');
     },
     graphql: async () => ({
-      repository: {pullRequest: {reviewThreads: {
+      repository: {pullRequest: {headRefOid: head, closingIssuesReferences: {nodes:actualClosingIssues.map(number=>({number,repository:{nameWithOwner:orchestration.REPOSITORY}})),pageInfo:{hasNextPage:false}}, reviewThreads: {
         nodes: [{isResolved: !unresolved}], pageInfo: {hasNextPage: false, endCursor: null}
       }}}
     }),

@@ -364,7 +364,7 @@ async function dependenciesReady({
   return ready;
 }
 
-async function revalidateDispatchCandidate({github, context, issueNumber, io = fs}) {
+async function revalidateDispatchCandidate({github, context, issueNumber, candidate, io = fs}) {
   try {
     const {owner, repo} = context.repo;
     assert(`${owner}/${repo}` === REPOSITORY && context.ref === 'refs/heads/main' &&
@@ -372,7 +372,7 @@ async function revalidateDispatchCandidate({github, context, issueNumber, io = f
     const catalog = JSON.parse(io.readFileSync(CATALOG_PATH, 'utf8'));
     const tasks = validateCatalog(catalog);
     const task = catalog.tasks.find(candidate => candidate.issue === issueNumber);
-    if (!task) return false;
+    if (!task || (candidate && !taskMatchesAuthorizedIssue(task,candidate))) return false;
     const [main, issueResult, issues, allPrs] = await Promise.all([
       github.rest.repos.getBranch({owner, repo, branch: 'main'}),
       github.rest.issues.get({owner, repo, issue_number: issueNumber}),
@@ -459,36 +459,44 @@ function reviewFiles(body) {
 }
 
 async function trustedReview({github, owner, repo, pr, changedFiles, headSha}) {
-  const [reviews, requested, threads] = await Promise.all([
+  const [reviews, requested, evidence] = await Promise.all([
     github.paginate(github.rest.pulls.listReviews, {owner, repo, pull_number: pr.number, per_page: 100}),
     github.rest.pulls.listRequestedReviewers({owner, repo, pull_number: pr.number}),
     (async () => {
       const all = [];
+      let closingVerified = true;
       let after = null;
       do {
         const page = await github.graphql(
-          `query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$after){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}`,
+          `query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){headRefOid closingIssuesReferences(first:100){nodes{number repository{nameWithOwner}}pageInfo{hasNextPage}} reviewThreads(first:100,after:$after){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}`,
           {owner, repo, number: pr.number, after}
         );
-        const connection = page?.repository?.pullRequest?.reviewThreads;
+        const node = page?.repository?.pullRequest;
+        const links = node?.closingIssuesReferences;
+        assert(node?.headRefOid === headSha && Array.isArray(links?.nodes) &&
+          links.pageInfo?.hasNextPage === false, 'Closing mission evidence is incomplete or stale');
+        const expected = linkedIssueNumbers(pr.body || '');
+        closingVerified = closingVerified && expected.length === 1 && links.nodes.length === 1 &&
+          links.nodes[0]?.number === expected[0] && links.nodes[0]?.repository?.nameWithOwner === REPOSITORY;
+        const connection = node.reviewThreads;
         assert(Array.isArray(connection?.nodes) && typeof connection.pageInfo?.hasNextPage === 'boolean',
           'Review thread evidence is incomplete');
         all.push(...connection.nodes);
         after = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
         assert(!connection.pageInfo.hasNextPage || after, 'Review thread pagination is incomplete');
       } while (after);
-      return all;
+      return {threads:all, closingVerified};
     })()
   ]);
   assert(Array.isArray(requested.data?.users) && Array.isArray(requested.data?.teams),
     'Review request evidence is incomplete');
   if (pendingAutomatedReview(requested.data)) return false;
-  if (threads.some(thread => thread.isResolved !== true)) return false;
+  if (!evidence.closingVerified || evidence.threads.some(thread => thread.isResolved !== true)) return false;
   if (hasChangeRequest(reviews)) return false;
 
   const finalReview = reviews.filter(review => BOT_REVIEWERS.has(review.user?.login) &&
     review.commit_id === headSha)
-    .sort((a, b) => String(b.submitted_at || '').localeCompare(String(a.submitted_at || '')))[0];
+    .sort((a, b) => String(b.submitted_at || '').localeCompare(String(a.submitted_at || '')) || b.id-a.id)[0];
   if (!finalReview || finalReview.state !== 'COMMENTED' || typeof finalReview.body !== 'string' ||
     !/\bApproval recommended\b/i.test(finalReview.body) ||
     !/\bNo open issues\b/i.test(finalReview.body) ||
