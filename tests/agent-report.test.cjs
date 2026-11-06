@@ -23,7 +23,7 @@ function fixture(options = {}) {
       ] : []),
       {number: 5, title: 'Active mission', html_url: 'https://example.test/issues/5', updated_at: '2026-11-05T12:02:00Z',
         labels: [{name: 'agent:blocked'}], assignees: [{login: 'copilot'}]},
-      {number: 6, title: 'Regular issue', labels: [], assignees: []}
+      ...(!options.linkedIssue ? [{number: 6, title: 'Regular issue', labels: [], assignees: []}] : [])
     ],
     prRuns: options.prRuns || [],
     openPulls: [{
