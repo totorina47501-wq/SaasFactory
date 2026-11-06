@@ -25,7 +25,7 @@ test('authorized backlog has unique real issue identities and bounded automation
   const backlog = read();
   assert.equal(backlog.schemaVersion, 1);
   assert.equal(backlog.repository, 'totorina47501-wq/SaasFactory');
-  assert.equal(backlog.tasks.length, 40);
+  assert.equal(backlog.tasks.length, 45);
   assert.deepEqual(backlog.limits, {maxActiveMissions:2,maxAssignmentsPerRun:1,maxCiRetriesPerPrSha:2,scheduleCron:'*/10 * * * *'});
   assert.equal(new Set(backlog.tasks.map(t=>t.key)).size, backlog.tasks.length);
   assert.equal(new Set(backlog.tasks.map(t=>t.issue)).size, backlog.tasks.length);
@@ -110,4 +110,17 @@ test('separate mission file scopes cannot race over the same files', () => {
       assert.ok(!overlaps, tasks[i].key+' and '+tasks[j].key+' overlap: '+a+' / '+b);
     }
   }
+});
+
+test('growth missions are present with isolated file scopes and complete dependencies',()=>{
+ const all=new Map(read().tasks.map(t=>[t.issue,t]));
+ for(const issue of [64,65,66,70,71]) {
+  const task=all.get(issue);
+  assert.ok(task,'missing growth task '+issue);
+  assert.ok(task.files.length>=3);
+  assert.ok(task.dependsOn.some(d=>d.kind==='issue'&&d.number===17));
+ }
+ for(const n of [64,65,66,70]) {
+  assert.ok(all.get(71).dependsOn.some(x=>x.kind==='issue'&&x.number===n));
+ }
 });
