@@ -1,7 +1,7 @@
 name: SaaSFactory Projects V2 status sync
 on:
   schedule:
-    - cron: '0,30 * * * *'
+    - cron: '*/10 * * * *'
   workflow_dispatch:
     inputs:
       apply:
