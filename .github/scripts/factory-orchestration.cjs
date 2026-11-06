@@ -423,19 +423,27 @@ async function trustedCi(github, owner, repo, workflow, sha, number) {
   const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
     owner, repo, workflow_id: workflow.id, head_sha: sha, event: 'pull_request', per_page: 100
   });
-  const matching = runs.filter(run => run.workflow_id === workflow.id && run.head_sha === sha &&
-    run.event === 'pull_request' && run.repository?.full_name === REPOSITORY &&
-    run.head_repository?.full_name === REPOSITORY && Array.isArray(run.pull_requests) &&
-    run.pull_requests.length === 1 && run.pull_requests[0]?.number === number);
-  if (!matching.length || matching.some(run => !Number.isSafeInteger(run.id) || run.id < 1 ||
+  const relevant = runs.filter(run => run.workflow_id === workflow.id && run.head_sha === sha &&
+    run.event === 'pull_request');
+  const candidates = relevant.filter(run =>
+    !(run.repository?.full_name === REPOSITORY &&
+      run.head_repository?.full_name === REPOSITORY &&
+      Array.isArray(run.pull_requests) && run.pull_requests.length === 1 &&
+      Number.isSafeInteger(run.pull_requests[0]?.number) &&
+      run.pull_requests[0].number !== number));
+  if (!candidates.length || candidates.some(run => !Number.isSafeInteger(run.id) || run.id < 1 ||
     !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1 ||
     !Number.isFinite(Date.parse(run.created_at)))) return false;
-  matching.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) ||
+  candidates.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) ||
     Number(b.id) - Number(a.id));
-  const newestRunId = matching[0].id;
-  const newestAttempt = matching.filter(run => run.id === newestRunId)
+  const newestRunId = candidates[0].id;
+  const newestAttempt = candidates.filter(run => run.id === newestRunId)
     .sort((a, b) => b.run_attempt - a.run_attempt)[0];
-  return newestAttempt.status === 'completed' && newestAttempt.conclusion === 'success';
+  return newestAttempt.repository?.full_name === REPOSITORY &&
+    newestAttempt.head_repository?.full_name === REPOSITORY &&
+    Array.isArray(newestAttempt.pull_requests) && newestAttempt.pull_requests.length === 1 &&
+    newestAttempt.pull_requests[0]?.number === number &&
+    newestAttempt.status === 'completed' && newestAttempt.conclusion === 'success';
 }
 
 function pendingAutomatedReview(requested) {

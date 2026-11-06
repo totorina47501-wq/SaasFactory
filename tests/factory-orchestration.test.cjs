@@ -20,6 +20,42 @@ test('a different PR CI result cannot override the candidate failed check',async
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(state)),false);
 });
 
+test('newest ambiguous CI association blocks older candidate success', async () => {
+  for (const association of [[], [{number: 45}, {number: 99}], null]) {
+    const state = mergeMocks({workflowRuns: [
+      {
+        id: 100, created_at: '2026-11-06T09:00:00Z', run_attempt: 1,
+        workflow_id: 12, head_sha: headSha, event: 'pull_request',
+        status: 'completed', conclusion: 'success'
+      },
+      {
+        id: 101, created_at: '2026-11-06T09:01:00Z', run_attempt: 1,
+        workflow_id: 12, head_sha: headSha, event: 'pull_request',
+        status: 'completed', conclusion: 'failure', pull_requests: association
+      }
+    ]});
+    assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(state)), false);
+    assert.equal(state.calls.length, 0);
+  }
+});
+
+test('newest successful candidate run ignores only a positively associated different PR', async () => {
+  const state = mergeMocks({workflowRuns: [
+    {
+      id: 100, created_at: '2026-11-06T09:00:00Z', run_attempt: 1,
+      workflow_id: 12, head_sha: headSha, event: 'pull_request',
+      status: 'completed', conclusion: 'success', pull_requests: [{number: 45}]
+    },
+    {
+      id: 101, created_at: '2026-11-06T09:01:00Z', run_attempt: 1,
+      workflow_id: 12, head_sha: headSha, event: 'pull_request',
+      status: 'completed', conclusion: 'failure', pull_requests: [{number: 99}]
+    }
+  ]});
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(state)), true);
+  assert.equal(state.calls.length, 1);
+});
+
 test('dependency delivery needs canonical closure evidence beyond merged PR prose',async()=>{
   const data=catalog(), task=data.tasks.find(t=>t.key==='SFV3-ARCH');
   const parent=coordinatorTask(), completed=issue(parent,{state:'closed',state_reason:'completed'});
