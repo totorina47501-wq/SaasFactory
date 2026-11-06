@@ -17,11 +17,18 @@ function fixture(options = {}) {
     jobs: [{id: 30, name: 'test', status: 'completed', conclusion: 'failure', started_at: '2026-11-05T12:00:10Z',
       completed_at: '2026-11-05T12:01:00Z', html_url: 'https://example.test/job/30'}],
     issues: [
+      ...(options.linkedIssue ? [
+        {number: 6, title: 'Linked inactive issue', html_url:'https://example.test/issues/6',labels:[],assignees:[]},
+        {number: 88, title: 'PR returned by issues API',pull_request:{url:'https://example.test/pr/88'},labels:[{name:'agent:blocked'}],assignees:[{login:'Copilot'}]}
+      ] : []),
       {number: 5, title: 'Active mission', html_url: 'https://example.test/issues/5', updated_at: '2026-11-05T12:02:00Z',
         labels: [{name: 'agent:blocked'}], assignees: [{login: 'copilot'}]},
       {number: 6, title: 'Regular issue', labels: [], assignees: []}
     ],
+    prRuns: options.prRuns || [],
     openPulls: [{
+      body: options.linkedIssue ? 'Fixes #6' : '',
+      user:{login:'Copilot'},
       number: 7, title: 'Open PR', html_url: 'https://example.test/pull/7', state: 'open', draft: false,
       created_at: '2026-11-05T12:00:00Z', updated_at: '2026-11-05T12:03:00Z',
       head: {ref: 'copilot/task', sha: 'pr-head-sha'}, base: {ref: 'main', sha: 'pr-base-sha'},
@@ -43,7 +50,11 @@ function fixture(options = {}) {
         return sources.main;
       }},
       actions: {
-        listWorkflowRunsForRepo: async () => {
+        listWorkflowRunsForRepo: async (args) => {
+          if(args.branch !== 'main'){
+            if(shouldFail('prRuns')) throw Error('PR runs unavailable');
+            return {data:{workflow_runs:sources.prRuns}};
+          }
           if (shouldFail('runs')) throw Error('runs unavailable');
           if (options.malformedRuns) return {data: {}};
           return {data: {workflow_runs: sources.runs}};
@@ -143,4 +154,24 @@ test('workflow is scheduled six-hourly and grants only read permissions', () => 
   assert.match(workflow, /if:\s*github\.ref == 'refs\/heads\/main'/);
   assert.doesNotMatch(workflow, /(?:issues|pull-requests|actions|contents):\s*write/);
   assert.doesNotMatch(workflow, /secrets\.(?!GITHUB_TOKEN)/);
+});
+
+
+test('linked Copilot PR counts issue as active but excludes PRs from issues API',async()=>{
+ const {report}=await fixture({linkedIssue:true})();
+ assert.deepEqual(report.activeCopilotIssues.map(i=>i.number).sort((a,b)=>a-b),[5,6]);
+ assert.ok(!report.blockers.some(b=>b.type==='blocked-issue' && b.number===88));
+});
+test('failing open PR CI is reported even when main runs are green or crowded',async()=>{
+ const failed={id:77,name:'SaaS Factory CI',event:'pull_request',head_sha:'pr-head-sha',status:'completed',conclusion:'failure',
+  created_at:'2026-11-06T00:00:00Z',updated_at:'2026-11-06T00:01:00Z',html_url:'https://example.test/run/77'};
+ const {report}=await fixture({prRuns:[failed]})();
+ assert.ok(report.workflowRuns.some(run=>run.id===77 && run.conclusion==='failure'));
+ assert.ok(report.blockers.some(b=>b.type==='failed-workflow-run' && b.id===77));
+ assert.equal(report.sources.pullRequestWorkflowRuns,'available');
+});
+test('failed PR CI lookup marks report incomplete instead of concealing unknown status',async()=>{
+ const {report}=await fixture({fail:['prRuns']})();
+ assert.equal(report.sources.pullRequestWorkflowRuns,'partial');
+ assert.equal(report.complete,false);
 });
