@@ -4,7 +4,7 @@ on:
     - cron: '*/10 * * * *'
   workflow_dispatch:
   workflow_run:
-    workflows: ['SaaS Factory CI']
+    workflows: ['SaaS Factory CI', 'SaaS Factory trusted review signal']
     types: [completed]
 permissions:
   contents: read
@@ -17,12 +17,30 @@ concurrency:
 jobs:
   dispatch:
     # workflow_run can fire for pull requests; only a successful PUSH CI on the trusted main repository may wake this privileged dispatcher.
-    if: ${{ github.repository == 'totorina47501-wq/SaasFactory' && github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || (github.event.workflow_run.name == 'SaaS Factory CI' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_sha == github.sha && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.conclusion == 'success')) }}
+    if: ${{ github.repository == 'totorina47501-wq/SaasFactory' && github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.conclusion == 'success' && ((github.event.workflow_run.name == 'SaaS Factory CI' && ((github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_sha == github.sha) || (github.event.workflow_run.event == 'pull_request' && startsWith(github.event.workflow_run.head_branch, 'copilot/')))) || (github.event.workflow_run.name == 'SaaS Factory trusted review signal' && github.event.workflow_run.event == 'pull_request_review')))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
       COPILOT_DISPATCH_TOKEN_CONFIGURED: ${{ secrets.COPILOT_DISPATCH_TOKEN != '' }}
     steps:
+      - name: Verify trusted review notification job before privileged dispatch
+        if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name == 'SaaS Factory trusted review signal' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const source = await github.rest.actions.getWorkflow({
+              owner: context.repo.owner, repo: context.repo.repo, workflow_id: run.workflow_id
+            });
+            if (source.data.path !== '.github/workflows/saas-factory-review-signal.yml') {
+              throw new Error('Review notification workflow path mismatch');
+            }
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner: context.repo.owner, repo: context.repo.repo, run_id: run.id, filter: 'latest', per_page: 100
+            });
+            if (!jobs.some(j => j.name === 'notify' && j.status === 'completed' && j.conclusion === 'success')) {
+              throw new Error('Review notification job not completed successfully');
+            }
       - name: Require Copilot user token
         shell: bash
         run: |
