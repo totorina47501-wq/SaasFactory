@@ -6,7 +6,7 @@
 - A Copilot-assigned issue, in-progress/review/blocked label, or linked Copilot PR consumes capacity. Maximum two concurrent missions. Issues without scope or PRs without an issue link block unsafe dispatch.
 - At most one approved, unassigned issue is dispatched per pass. No newly approved issue means an idle run.
 - REST Copilot assignment is in public preview. The default GitHub Actions `GITHUB_TOKEN` may not support it; failed assignment fails the job. Never add a broader credential or change permissions without owner review.
-- Reports: JSON artifact and job summary on every pass, including six-hour UTC checkpoints (00, 06, 12, 18). They capture the dispatch decision, not full GitHub CI/review/credit usage. A more comprehensive reporting workflow is a separate approved work item.
+- Dispatcher reports: JSON artifact and job summary on each dispatch pass (currently every 10 minutes). A separate **read-only operations report** runs at 00, 06, 12, 18 UTC and on manual dispatch from `main`. The dedicated report covers verified Actions runs, CI jobs, active agent issues and PR reviews, blocking approvals and last merged PRs; missing GitHub API data is explicitly flagged `incomplete`. No inference of paid Copilot credit usage.
 - This first phase does **not** auto-retry failed CI or assign automated code review. A bounded corrective workflow requires explicit scope and separate security tests.
 - Manual verification before enabling: merge with review; check scheduled run; create a harmless approved issue with exact `Files:` scope; inspect whether GitHub accepted assignment and created a Copilot task/PR; review usage/quota from GitHub billing controls. Do not assert that assignment works from a workflow-only test.
 - Do not reuse code, migrations, secrets, Mia/RAG or workflows from Project3.
@@ -33,3 +33,5 @@ GitHub cloud agent accepts `agent_assignment.custom_agent` in its API (public pr
 **Operators:** no automated role-creation, secret changes, GitHub Projects Status mutation or auto-merge by specialist profiles. Review PR and CI evidence before merging.
 
 - The ten-minute cadence increases the frequency of checking the queue, **not** the two-mission concurrency limit or Copilot/GitHub quotas. Check Actions run timestamps and agent-dispatch-report.json for evidence of real assignments. GitHub Actions schedules are best-effort.
+
+- Dedicated reports use `.github/workflows/saas-factory-agent-report.yml` and `.github/scripts/agent-report.cjs`, store `agent-report.json` and a job summary (artifact retention 30 days), use read-only `GITHUB_TOKEN` and never dispatch agents, create issues, merge or deploy.
