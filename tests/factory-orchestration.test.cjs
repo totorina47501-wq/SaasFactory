@@ -42,7 +42,11 @@ function orchestrationGithub({issues = [], allPrs = [], openPrs = [], dependency
           if (!value) throw Error('missing issue');
           return {data: value};
         },
-        setLabels: async args => calls.push(['setLabels', args])
+        setLabels: async args => {
+          const current = issuesByNumber.get(args.issue_number);
+          current.labels = args.labels.map(name => ({name}));
+          calls.push(['setLabels', args]);
+        }
       },
       pulls: {
         list() {},
@@ -116,6 +120,9 @@ test('only an exact catalog-backed planned mission is promoted', async () => {
   assert.deepEqual(calls.map(call => call[0]), ['setLabels']);
   assert.ok(calls[0][1].labels.includes('agent:approved'));
   assert.ok(!calls[0][1].labels.includes('agent:planned'));
+  const replay = await runCoordinator(github);
+  assert.deepEqual(replay.promoted, []);
+  assert.equal(calls.length, 1);
 });
 
 test('scope, role, dependencies, and not-planned closures block promotion', async () => {

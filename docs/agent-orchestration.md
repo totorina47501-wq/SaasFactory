@@ -46,4 +46,4 @@ Automatic merge is restricted to the same repository and `main`, exactly one cat
 
 The workflow remains `*/10`, with at most two active missions and one assignment per pass. It runs only from `main`, checks out `github.sha` with no persisted credentials, and supplies the user token only to its API step. Reports contain decisions and issue / PR identifiers, not credentials or raw API errors.
 
-Recovery is not triggered by this coordinator: the existing #6/#16 mechanism must demonstrate real Copilot triggering before activation. `retryAllowed(attempts, limit)` implements the strict two-attempt bound for future integration; it does not claim or simulate a retry. The coordinator never retries a merge, changes code, or loops corrections.
+Recovery is not triggered by this coordinator: the existing #6/#16 mechanism must demonstrate real Copilot triggering before activation. `retryAllowed(attempts)` implements the strict two-attempt bound for future integration; it does not claim or simulate a retry. The coordinator never retries a merge, changes code, or loops corrections.

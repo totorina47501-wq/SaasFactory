@@ -165,6 +165,8 @@ function taskMatchesIssue(task, issue) {
   const labels = names(issue.labels);
   return issue.state === 'open' && !isUnplanned(labels) &&
     labels.includes('agent:planned') && !labels.includes('agent:approved') &&
+    !labels.includes('agent:blocked') && !labels.includes('agent:in-progress') &&
+    !labels.includes('agent:review') &&
     taskMetadataMatches(task, issue, false);
 }
 
@@ -198,8 +200,8 @@ function overlap(left, right) {
     (right.endsWith('/') && left.startsWith(right));
 }
 
-function retryAllowed(attempts, limit = 2) {
-  return Number.isSafeInteger(attempts) && attempts >= 0 && attempts < limit;
+function retryAllowed(attempts) {
+  return Number.isSafeInteger(attempts) && attempts >= 0 && attempts < 2;
 }
 
 function safeApiError() {

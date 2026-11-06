@@ -48,6 +48,14 @@ test('coordinator runs before issue selection',async()=>{
  assert.deepEqual(order.slice(0,2),['coordinate','github']);
  assert.equal(x.report.orchestration.decision,'idle');
 });
+test('dispatcher omits raw operation errors from reports',async()=>{
+ const x=await exercise([],[],{
+   fail:true,
+   orchestration:{run:async()=>{throw Error('SENTINEL_TOKEN_MUST_NOT_LEAK')}}
+ });
+ assert.equal(x.report.decision,'error');
+ assert.doesNotMatch(JSON.stringify(x.report),/SENTINEL_TOKEN_MUST_NOT_LEAK/);
+});
 const issue=(n,labels=[],body='Files: src/a.js')=>({number:n,labels:labels.map(name=>({name})),assignees:[],body});
 const pr=(n,body='',head='feature/other')=>({number:n,body,head:{ref:head},user:{login:head.startsWith('copilot/')?'Copilot':'someone'},draft:true});
 test('idle without explicitly approved issues',async()=>{const x=await exercise([issue(2)]);assert.equal(x.report.decision,'idle:no-approved-missions');assert.equal(x.calls.length,0)});
