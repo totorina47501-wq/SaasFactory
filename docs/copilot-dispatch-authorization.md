@@ -31,7 +31,7 @@ La [documentation GitHub](https://docs.github.com/en/copilot/how-tos/use-copilot
 ## Isolation et limites
 
 - Le workflow ne répond qu'au planning et à `workflow_dispatch`, sur le dépôt attendu et `refs/heads/main`. Aucune exécution sur événement de PR ou code de PR.
-- Le checkout charge `main` avec le jeton par défaut en lecture et `persist-credentials: false`. Le secret utilisateur est fourni uniquement à l'étape `actions/github-script` du dispatcher.
+- Le checkout charge le SHA exact de l'événement (`github.sha`) avec le jeton par défaut en lecture et `persist-credentials: false`, sous le garde-fou `refs/heads/main`. Une avance de `main` pendant l'attente ou une réexécution ne change donc pas le code attribué à `context.sha` dans le rapport. Le secret utilisateur est fourni uniquement à l'étape `actions/github-script` du dispatcher.
 - Si le secret manque, arrêt explicite avant le checkout. Aucun repli vers `GITHUB_TOKEN`, aucune élévation de ses permissions et aucune tentative en boucle dans une exécution.
 - Les garde-fous existants restent inchangés : mission approuvée, spécialiste unique, absence de conflits de fichiers, deux missions actives au maximum, une affectation par passage et confirmation via relecture API.
 - Six contrôles par heure ne garantissent ni six missions ni une affectation. Ce correctif ne traite pas les reprises CI bornées de #6, ne modifie pas Projects et n'autorise aucune fusion automatique.

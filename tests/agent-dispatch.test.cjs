@@ -8,7 +8,7 @@ test('dispatch workflow isolates a user token from checkout and refuses missing 
  assert.match(workflow,/COPILOT_DISPATCH_TOKEN_CONFIGURED: \$\{\{ secrets\.COPILOT_DISPATCH_TOKEN != '' \}\}/);
  assert.match(workflow,/test "\$COPILOT_DISPATCH_TOKEN_CONFIGURED" = 'true'/);
  const checkout=workflow.slice(workflow.indexOf('- uses: actions/checkout@v4'),workflow.indexOf('- uses: actions/github-script@v7'));
- assert.match(checkout,/ref: main/);
+ assert.match(checkout,/ref: \$\{\{ github\.sha \}\}/);
  assert.match(checkout,/persist-credentials: false/);
  assert.doesNotMatch(checkout,/COPILOT_DISPATCH_TOKEN/);
  assert.match(workflow,/if:.*github\.repository == 'totorina47501-wq\/SaasFactory'.*github\.ref == 'refs\/heads\/main'/);

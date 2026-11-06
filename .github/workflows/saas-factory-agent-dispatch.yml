@@ -28,7 +28,7 @@ jobs:
           fi
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/github-script@v7
         env:
