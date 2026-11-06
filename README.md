@@ -43,3 +43,14 @@ The generated directory must not already exist. Customize the JSON with your new
 ## Agent cadence
 
 Dispatcher and Projects V2 status synchronization request **every 10 minutes** (six per hour). GitHub scheduled execution is best-effort and can be delayed. This does not increase concurrent Copilot assignments: the dispatcher still permits two active missions and one assignment per run, with an explicit specialist role, approved issue and file scope. No automatic merge, SaaS repository creation or deployment.
+
+## ChatGPT SaaS Intake Engine v1
+
+Use [the ChatGPT intake master prompt](docs/prompts/chatgpt-saas-intake-v1.md) and the [versioned machine-readable contract](docs/contracts/saas-intake-v1.md). Convert an intake manifest to a **read-only plan** and generator configuration:
+
+```sh
+node intake.mjs --input examples/intake-sample.json > /tmp/intake-plan.json
+npm test
+```
+
+The `generatorConfig` field in the output is compatible with the existing `generate.mjs` schema. All proposed `missionDrafts` remain **unapproved** and do not create GitHub issues, repositories or deployments. New SaaS product work must be placed in an independent repository; the existing dispatcher is scoped to SaaSFactory.

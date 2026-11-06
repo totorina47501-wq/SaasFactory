@@ -1,0 +1,241 @@
+{
+  "catalogVersion": 1,
+  "scope": "design-references-only",
+  "source": "Project3 architecture inventory; never copy product logic, migrations, data, secrets or prompts",
+  "capabilities": [
+    {
+      "id": "auth-rbac",
+      "title": "Identity & RBAC",
+      "category": "accounts",
+      "status": "scaffold",
+      "scaffold": "auth",
+      "owner": "product-architect",
+      "reference": "app/(auth)/; lib/security/auth.ts"
+    },
+    {
+      "id": "subscriptions",
+      "title": "Subscriptions & metered billing",
+      "category": "commerce",
+      "status": "scaffold",
+      "scaffold": "billing-test",
+      "owner": "generator-engineer",
+      "reference": "lib/billing/; components/PricingCheckout.tsx"
+    },
+    {
+      "id": "payments-webhooks",
+      "title": "Payments, idempotent webhooks & reconciliation",
+      "category": "commerce",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "security-engineer",
+      "reference": "app/api/stripe/"
+    },
+    {
+      "id": "postgres-rls",
+      "title": "PostgreSQL, tenant isolation & access policies",
+      "category": "data",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "security-engineer",
+      "reference": "lib/supabase/; supabase/migrations/"
+    },
+    {
+      "id": "audit-logs",
+      "title": "Audit events and traceable operations",
+      "category": "platform",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "security-engineer",
+      "reference": "lib/security/logging.ts"
+    },
+    {
+      "id": "private-media-storage",
+      "title": "Private upload/storage & signed access",
+      "category": "media",
+      "status": "scaffold",
+      "scaffold": "media",
+      "owner": "platform-engineer",
+      "reference": "app/api/media/; lib/media/browser-upload.ts"
+    },
+    {
+      "id": "video-ingest",
+      "title": "Video upload, MIME/type, duration/size validation",
+      "category": "video",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "generator-engineer",
+      "reference": "lib/media/validation.ts; app/api/media/"
+    },
+    {
+      "id": "video-extraction",
+      "title": "Video metadata, thumbnails and frame extraction",
+      "category": "video",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "generator-engineer",
+      "reference": "workers/video/README.md; workers/video/src/"
+    },
+    {
+      "id": "audio-extraction",
+      "title": "Extract and normalize private audio tracks",
+      "category": "audio",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "generator-engineer",
+      "reference": "workers/video/README.md"
+    },
+    {
+      "id": "audio-transcription",
+      "title": "Opt-in ASR transcript with provider cost controls",
+      "category": "audio",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "generator-engineer",
+      "reference": "lib/openai/audio.ts; tests/unit/openai-audio-adapter.test.ts"
+    },
+    {
+      "id": "audio-subtitles",
+      "title": "Caption/subtitle VTT/SRT generation & review",
+      "category": "audio",
+      "status": "proposed",
+      "scaffold": null,
+      "owner": "ux-accessibility",
+      "reference": null
+    },
+    {
+      "id": "audio-tts",
+      "title": "Optional text-to-speech with consent",
+      "category": "audio",
+      "status": "proposed",
+      "scaffold": null,
+      "owner": "generator-engineer",
+      "reference": null
+    },
+    {
+      "id": "audio-waveform",
+      "title": "Waveform, playback and accessible controls",
+      "category": "audio",
+      "status": "proposed",
+      "scaffold": null,
+      "owner": "ux-accessibility",
+      "reference": null
+    },
+    {
+      "id": "image-optimization",
+      "title": "Images, carousel processing and responsive conversion",
+      "category": "media",
+      "status": "scaffold",
+      "scaffold": "media",
+      "owner": "generator-engineer",
+      "reference": "workers/carousel/; workers/media-jobs/README.md"
+    },
+    {
+      "id": "media-job-queue",
+      "title": "Background bounded jobs, retry, cancel and quotas",
+      "category": "platform",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "platform-engineer",
+      "reference": "workers/media-jobs/README.md; app/api/media/jobs/"
+    },
+    {
+      "id": "media-retention",
+      "title": "Retention periods and private erasure",
+      "category": "privacy",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "security-engineer",
+      "reference": "lib/media/retention.ts; lib/privacy/erasure.ts"
+    },
+    {
+      "id": "media-integrity",
+      "title": "SHA-256 integrity, dedupe & safe recovery",
+      "category": "security",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "security-engineer",
+      "reference": "lib/media/integrity.ts; lib/evidence/sha256.ts"
+    },
+    {
+      "id": "ai-assistant",
+      "title": "Provider-opt-in conversational AI",
+      "category": "ai",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "generator-engineer",
+      "reference": "lib/ai/; lib/mia/"
+    },
+    {
+      "id": "rag-search",
+      "title": "Vector retrieval with access-controlled corpus",
+      "category": "ai",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "security-engineer",
+      "reference": "lib/mia/; tests/unit/mia-vector-retrieval.test.ts"
+    },
+    {
+      "id": "notifications-email",
+      "title": "Transactional emails and in-app notifications",
+      "category": "communication",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "generator-engineer",
+      "reference": "lib/email/"
+    },
+    {
+      "id": "api-webhooks",
+      "title": "Public API keys, rate limits and signed webhooks",
+      "category": "platform",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "security-engineer",
+      "reference": "app/api/v1/; lib/security/rate-limit.ts"
+    },
+    {
+      "id": "analytics-events",
+      "title": "Privacy-aware product usage analytics",
+      "category": "analytics",
+      "status": "proposed",
+      "scaffold": null,
+      "owner": "product-architect",
+      "reference": null
+    },
+    {
+      "id": "privacy-export-delete",
+      "title": "User data export and erasure workflows",
+      "category": "privacy",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "security-engineer",
+      "reference": "lib/privacy/; components/ErasureRequest.tsx"
+    },
+    {
+      "id": "e2e-playwright",
+      "title": "Authenticated E2E journeys and accessibility checks",
+      "category": "quality",
+      "status": "missing",
+      "scaffold": null,
+      "owner": "qa-engineer",
+      "reference": "tests/e2e/; playwright.config.ts"
+    },
+    {
+      "id": "i18n-seo",
+      "title": "Internationalization, metadata, sitemap & robots",
+      "category": "growth",
+      "status": "scaffold",
+      "scaffold": null,
+      "owner": "ux-accessibility",
+      "reference": "app/robots.ts; app/sitemap.ts"
+    },
+    {
+      "id": "admin-operations",
+      "title": "Admin diagnostics, quota & observability dashboards",
+      "category": "platform",
+      "status": "proposed",
+      "scaffold": null,
+      "owner": "platform-engineer",
+      "reference": "app/api/admin/; lib/security/quota.ts"
+    }
+  ]
+}
