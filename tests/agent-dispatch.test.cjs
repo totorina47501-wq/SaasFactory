@@ -13,7 +13,14 @@ test('dispatch workflow isolates a user token from checkout and refuses missing 
  assert.match(checkout,/persist-credentials: false/);
  assert.doesNotMatch(checkout,/COPILOT_DISPATCH_TOKEN/);
  assert.match(workflow,/if:.*github\.repository == 'totorina47501-wq\/SaasFactory'.*github\.ref == 'refs\/heads\/main'/);
- assert.doesNotMatch(workflow,/pull_request:|pull_request_target:|workflow_run:/);
+ assert.doesNotMatch(workflow,/^\s+pull_request(?:_target)?:/m);
+ assert.match(workflow,/workflow_run:\s*\n\s+workflows: \['SaaS Factory CI'\]/);
+ assert.match(workflow,/types: \[completed\]/);
+ assert.match(workflow,/github\.event\.workflow_run\.event == 'push'/);
+ assert.match(workflow,/github\.event\.workflow_run\.head_branch == 'main'/);
+ assert.match(workflow,/github\.event\.workflow_run\.head_sha == github\.sha/);
+ assert.match(workflow,/github\.event\.workflow_run\.head_repository\.full_name == github\.repository/);
+ assert.match(workflow,/github\.event\.workflow_run\.conclusion == 'success'/);
  assert.match(workflow,/issues: read/);
  assert.match(workflow,/pull-requests: read/);
  assert.match(workflow,/cron: '\*\/10 \* \* \* \*'/);
@@ -27,7 +34,7 @@ async function exercise(issues=[],prs=[],opts={}){
  const order=opts.order||[];
  const github={
    paginate:async(fn,arg)=>{order.push('github');if(fn===github.rest.issues.listForRepo)return issues;if(fn===github.rest.pulls.list)return prs;if(fn===github.rest.pulls.listFiles)return opts.files?.[arg.pull_number]||[];throw Error('unexpected paginate')},
-   rest:{issues:{listForRepo(){},get:async()=>({data:{assignees:[{login:'copilot-swe-agent[bot]'}]}}),addLabels:async a=>{calls.push(['label',a]);}},pulls:{list(){},listFiles(){}}},
+   rest:{issues:{listForRepo(){},get:async()=>({data:{assignees:opts.unconfirmed?[]:[{login:'copilot-swe-agent[bot]'}]}}),addLabels:async a=>{calls.push(['label',a]);}},pulls:{list(){},listFiles(){}}},
    request:async(_url,args)=>{calls.push(['assign',args]);if(opts.fail)throw Error('assignment refused');}
  };
  const previous=process.env.EXPECTED_REPO;process.env.EXPECTED_REPO='totorina47501-wq/SaasFactory';
@@ -36,7 +43,7 @@ async function exercise(issues=[],prs=[],opts={}){
  const context={repo:{owner:'totorina47501-wq',repo:'SaasFactory'},sha:'test',runId:1};
  const orchestration={run:async()=>({decision:'idle'}),revalidateDispatchCandidate:async()=>true,...opts.orchestration};
  try{await dispatch({github,context,core,orchestration,fs:{writeFileSync:(p,v)=>writes.push(JSON.parse(v))}});}
- catch(e){if(!opts.fail)throw e;}
+ catch(e){if(!opts.fail&&!opts.unconfirmed)throw e;}
  finally{if(previous===undefined)delete process.env.EXPECTED_REPO;else process.env.EXPECTED_REPO=previous}
  return {calls,report:writes.at(-1),order};
 }
@@ -106,4 +113,14 @@ test('specialist assignment remains limited to one issue',async()=>{
  const x=await exercise([issue(1,['agent:approved','agent:role:generator-engineer']),issue(2,['agent:approved','agent:role:platform-engineer'])]);
  assert.equal(x.calls.filter(a=>a[0]==='assign').length,1);
  assert.equal(x.report.specialist,'generator-engineer');
+});
+
+test('assignment evidence requires a confirmed Copilot read-back',async()=>{
+ const ok=await exercise([issue(5,['agent:approved','priority:p0','agent:role:platform-engineer'])]);
+ assert.deepEqual(ok.report.assignment,{issue:5,specialist:'platform-engineer',confirmed:true});
+ const denied=await exercise([issue(5,['agent:approved','priority:p0','agent:role:platform-engineer'])],[],{unconfirmed:true});
+ assert.equal(denied.report.decision,'error');
+ assert.equal(denied.calls.filter(c=>c[0]==='assign').length,1);
+ assert.deepEqual(denied.report.assignment,{issue:5,specialist:'platform-engineer',confirmed:false});
+ assert.equal(denied.calls.filter(c=>c[0]==='label').length,0);
 });
