@@ -29,8 +29,8 @@ function string(v,name,max=500){
   /sk-(?:proj-|test-|live-)?[A-Za-z0-9_-]{16,}/,
   /(?:AKIA|ASIA)[A-Z0-9]{16}/,
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
-  /(?:bearer\\s+)[A-Za-z0-9._~+/-]{20,}/i,
-  /(?:password|api[_ -]?key|access[_ -]?token|secret[_ -]?key)\\s*[:=]\\s*['"]?[A-Za-z0-9_+/=-]{16,}/i
+  /(?:bearer\s+)[A-Za-z0-9._~+/-]{20,}/i,
+  /(?:password|api[_ -]?key|access[_ -]?token|secret[_ -]?key)\s*[:=]\s*['"]?[A-Za-z0-9_+/=-]{16,}/i
  ];
  if(credentialMarkers.some(pattern=>pattern.test(v)))throw Error(name+' contains credential-like content');
  return v.trim();
