@@ -10,6 +10,22 @@ const WORKFLOW = fs.readFileSync(path.join(__dirname, '../.github/workflows/saas
 const REPO = 'totorina47501-wq/SaasFactory';
 const SHA = 'a'.repeat(40);
 
+test('mission links must be unique, real and safe integers', async () => {
+  for(const prBody of ['Fixes #6\nCloses #7','<!-- Fixes #6 -->','Fixes #0','Fixes #9007199254740993']) {
+    const state=await exercise({prBody});
+    assert.equal(state.created.length,0,prBody);
+  }
+});
+
+test('malformed numeric ledger identifiers fail closed',async()=>{
+  const comments=[];
+  await exercise({comments,runId:1});
+  for(const run of ['0','9007199254740993']){
+    const broken={...comments[0],body:comments[0].body.replace(';run=1;',';run='+run+';')};
+    await assert.rejects(exercise({comments:[broken],runId:2}),/failed closed/);
+  }
+});
+
 test('quota exhaustion is a failed workflow outcome, including replay of its blocked run', async () => {
   const comments=[];
   await exercise({comments,runId:1});

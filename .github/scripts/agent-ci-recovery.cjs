@@ -21,6 +21,14 @@ function approvedIssue(issue) {
   return !issue.pull_request && issue.state==='open' && labels.includes(APPROVAL_LABEL) &&
     roles.length===1 && SPECIALISTS.has(roles[0].slice('agent:role:'.length));
 }
+function linkedMission(body) {
+  // Hidden examples and ambiguous closure directives cannot authorize a recovery.
+  const visible=(body || '').replace(/<!--[\s\S]*?-->/g,'').replace(/```[\s\S]*?```/g,'');
+  const ids=[...visible.matchAll(/\b(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#(\d+)\b/gi)].map(match=>Number(match[1]));
+  if (!ids.length || ids.some(id=>!Number.isSafeInteger(id)||id<1)) return null;
+  const unique=[...new Set(ids)];
+  return unique.length===1 ? unique[0] : null;
+}
 
 function markerFor({pr, sha, runId, attempt, status}) {
   return `<!-- saas-factory-ci-recovery:v1;pr=${pr};sha=${sha};run=${runId};attempt=${attempt};status=${status}-->`;
@@ -31,6 +39,9 @@ function parseMarker(body) {
   if (markers.length !== 1) throw new Error('Malformed recovery ledger marker');
   const match = markers[0][1].match(/^v1;pr=(\d+);sha=([a-f0-9]{40});run=(\d+);attempt=([12]);status=(retry|blocked)$/i);
   if (!match) throw new Error('Malformed recovery ledger marker');
+  if (![match[1],match[3]].every(value=>Number.isSafeInteger(Number(value))&&Number(value)>0)) {
+    throw new Error('Invalid recovery ledger identifier');
+  }
   return {
     pr: Number(match[1]),
     sha: match[2].toLowerCase(),
@@ -133,10 +144,10 @@ module.exports = async ({github, context, core}) => {
         pr.head?.sha?.toLowerCase() !== report.sha || pr.head?.repo?.full_name !== expectedRepo ||
         !COPILOT_LOGINS.has((pr.user?.login || '').toLowerCase())) return await finish();
 
-    const linkedIssue = (pr.body || '').match(/(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#(\d+)\b/i);
+    const linkedIssue = linkedMission(pr.body);
     if (!linkedIssue) return await finish();
     const issueResult = await github.rest.issues.get({
-      owner, repo, issue_number: Number(linkedIssue[1])
+      owner, repo, issue_number: linkedIssue
     });
     if (!approvedIssue(issueResult.data)) return await finish();
 
@@ -172,13 +183,13 @@ module.exports = async ({github, context, core}) => {
     // Pagination can outlive approval or the PR head. Recheck immediately before writing.
     // These API reads narrow the race window; they are not an atomic write precondition.
     const latestPr = (await github.rest.pulls.get({owner, repo, pull_number: prNumber})).data;
-    const latestIssue = (await github.rest.issues.get({owner, repo, issue_number: Number(linkedIssue[1])})).data;
-    const latestLink = (latestPr.body || '').match(/(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#(\d+)\b/i);
+    const latestIssue = (await github.rest.issues.get({owner, repo, issue_number: linkedIssue})).data;
+    const latestLink = linkedMission(latestPr.body);
     if (latestPr.state !== 'open' || latestPr.base?.ref !== 'main' ||
         latestPr.head?.ref !== run.head_branch || latestPr.head?.sha?.toLowerCase() !== report.sha ||
         latestPr.head?.repo?.full_name !== expectedRepo ||
         !COPILOT_LOGINS.has((latestPr.user?.login || '').toLowerCase()) ||
-        latestLink?.[1] !== linkedIssue[1] || !approvedIssue(latestIssue)) {
+        latestLink !== linkedIssue || !approvedIssue(latestIssue)) {
       report.decision = 'ignored:eligibility-changed';
       return await finish();
     }
