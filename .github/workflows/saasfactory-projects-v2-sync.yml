@@ -1,0 +1,34 @@
+name: SaaSFactory Projects V2 status sync
+on:
+  schedule:
+    - cron: '0,30 * * * *'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Apply updates (requires enabled repository variable)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: saasfactory-projects-v2-status-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SYNC_ENABLED: ${{ vars.SAASFACTORY_PROJECTS_V2_SYNC_ENABLED }}
+      APPLY_REQUESTED: ${{ github.event_name == 'schedule' || inputs.apply == true }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconcile existing cards only
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.SAASFACTORY_PROJECTS_V2_TOKEN }}
+          script: |
+            const {sync}=require('./.github/scripts/projects-v2-sync.cjs');
+            await sync({
+              graphql:(q,v)=>github.graphql(q,v),core,
+              apply:process.env.SYNC_ENABLED==='true' && process.env.APPLY_REQUESTED==='true'
+            });
