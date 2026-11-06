@@ -30,6 +30,12 @@ function record(value, name) {
       (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) {
     fail('INVALID_INPUT', `${name} must be a plain object`);
   }
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (typeof key !== 'string' || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) {
+      fail('INVALID_INPUT', `${name} must contain only enumerable data fields`);
+    }
+  }
 }
 
 function exactKeys(value, required, optional = [], name = 'object') {
