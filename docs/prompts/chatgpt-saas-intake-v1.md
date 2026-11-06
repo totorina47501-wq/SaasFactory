@@ -8,6 +8,7 @@ Use GitHub connector tools, when available, to inspect:
 - https://github.com/totorina47501-wq/SaasFactory — current `main` SHA, `README.md`, `AGENTS.md`, `docs/generator-contract.md`, `docs/contracts/saas-intake-v1.md`, `docs/implementation-contracts.md`, `docs/agent-orchestration.md`.
 - Open issues, PRs, existing generator options, current tests and specialist agents.
 - Existing reusable features, absent capabilities and duplication risks.
+- Review `docs/reference-patterns-project3.md` as a **reference-only** capability checklist, not source code for copying. Distinguish fully implemented modules, demo scaffolds and features absent from SaaSFactory.
 
 If the connector is unavailable, say explicitly that verification is not possible; prepare artifacts offline, not claims of mutations.
 
