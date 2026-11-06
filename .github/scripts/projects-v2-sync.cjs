@@ -17,7 +17,7 @@ function desiredStatus(c){
   }
   if(c.__typename==='PullRequest'){
     if(c.merged) return 'Done';
-    if(c.state!=='OPEN') return null;
+    if(c.prState!=='OPEN') return null;
     return labs.has('agent:blocked')?'CI Blocked':'PR Review';
   }
   return null;
@@ -30,7 +30,7 @@ const QUERY=[
   'fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name optionId}}',
   'content{__typename',
   '... on Issue{number state repository{nameWithOwner} labels(first:100){nodes{name}} assignees(first:20){nodes{login}}}',
-  '... on PullRequest{number state merged repository{nameWithOwner} labels(first:100){nodes{name}}}',
+  '... on PullRequest{number prState:state merged repository{nameWithOwner} labels(first:100){nodes{name}}}',
   '}}}}}}'
 ].join(' ');
 const MUTATION=[
@@ -73,14 +73,28 @@ async function sync({graphql,core,apply=false}){
   }
   if(dupes.size&&apply) throw Error('Duplicate project cards; refusing to write');
   if(changes.length>100) throw Error('Too many status updates; refusing to write');
-  if(apply) for(const c of changes){
-    await graphql(MUTATION,{project:project.id,item:c.itemId,field:field.id,option:options.get(c.to)});
+  // GraphQL mutations are not atomic across cards: preserve audit evidence on partial failures.
+  const report={mode:apply?'apply':'dry-run',project:project.url,items:rows.length,
+    duplicates:[...dupes],changes:changes.map(({key,from,to})=>({key,from,to})),
+    applied:[],failed:null};
+  try {
+    if(apply) for(const c of changes){
+      try {
+        await graphql(MUTATION,{project:project.id,item:c.itemId,field:field.id,option:options.get(c.to)});
+        report.applied.push({key:c.key,from:c.from,to:c.to});
+      } catch(err) {
+        report.failed={key:c.key,from:c.from,to:c.to};
+        throw err;
+      }
+    }
+  } finally {
+    core.info(JSON.stringify(report));
+    await core.summary.addHeading('SaaSFactory Projects V2 status sync')
+      .addRaw('\nMode: **'+report.mode+'**; cards: '+rows.length+'; planned: '+changes.length+
+        '; applied: '+report.applied.length+'; duplicates: '+dupes.size+'; failed: '+
+        (report.failed?.key||'none')+'\n')
+      .addCodeBlock(JSON.stringify({planned:report.changes,applied:report.applied,failed:report.failed},null,2),'json').write();
   }
-  const report={mode:apply?'apply':'dry-run',project:project.url,items:rows.length,duplicates:[...dupes],changes:changes.map(({key,from,to})=>({key,from,to}))};
-  core.info(JSON.stringify(report));
-  await core.summary.addHeading('SaaSFactory Projects V2 status sync')
-    .addRaw('\nMode: **'+report.mode+'**; cards: '+rows.length+'; changes: '+changes.length+'; duplicates: '+dupes.size+'\n')
-    .addCodeBlock(JSON.stringify(report.changes,null,2),'json').write();
   return report;
 }
 module.exports={sync,desiredStatus};
