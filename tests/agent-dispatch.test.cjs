@@ -18,6 +18,7 @@ test('dispatch workflow isolates a user token from checkout and refuses missing 
  assert.match(workflow,/types: \[completed\]/);
  assert.match(workflow,/github\.event\.workflow_run\.event == 'push'/);
  assert.match(workflow,/github\.event\.workflow_run\.head_branch == 'main'/);
+ assert.match(workflow,/github\.event\.workflow_run\.head_sha == github\.sha/);
  assert.match(workflow,/github\.event\.workflow_run\.head_repository\.full_name == github\.repository/);
  assert.match(workflow,/github\.event\.workflow_run\.conclusion == 'success'/);
  assert.match(workflow,/issues: read/);
@@ -42,7 +43,7 @@ async function exercise(issues=[],prs=[],opts={}){
  const context={repo:{owner:'totorina47501-wq',repo:'SaasFactory'},sha:'test',runId:1};
  const orchestration={run:async()=>({decision:'idle'}),revalidateDispatchCandidate:async()=>true,...opts.orchestration};
  try{await dispatch({github,context,core,orchestration,fs:{writeFileSync:(p,v)=>writes.push(JSON.parse(v))}});}
- catch(e){if(!opts.fail)throw e;}
+ catch(e){if(!opts.fail&&!opts.unconfirmed)throw e;}
  finally{if(previous===undefined)delete process.env.EXPECTED_REPO;else process.env.EXPECTED_REPO=previous}
  return {calls,report:writes.at(-1),order};
 }
@@ -117,8 +118,9 @@ test('specialist assignment remains limited to one issue',async()=>{
 test('assignment evidence requires a confirmed Copilot read-back',async()=>{
  const ok=await exercise([issue(5,['agent:approved','priority:p0','agent:role:platform-engineer'])]);
  assert.deepEqual(ok.report.assignment,{issue:5,specialist:'platform-engineer',confirmed:true});
- const denied=await exercise([issue(5,['agent:approved','priority:p0','agent:role:platform-engineer'])],[],{fail:true,unconfirmed:true});
+ const denied=await exercise([issue(5,['agent:approved','priority:p0','agent:role:platform-engineer'])],[],{unconfirmed:true});
  assert.equal(denied.report.decision,'error');
+ assert.equal(denied.calls.filter(c=>c[0]==='assign').length,1);
  assert.deepEqual(denied.report.assignment,{issue:5,specialist:'platform-engineer',confirmed:false});
  assert.equal(denied.calls.filter(c=>c[0]==='label').length,0);
 });
