@@ -1,0 +1,68 @@
+# Read-only connectivity diagnostic for the existing user-owned GitHub Project V2.
+# Setup: create a classic personal access token with "project" (plus "repo" if private),
+# and save it as an Actions repository secret SAASFACTORY_PROJECTS_V2_TOKEN.
+# Never place the token in workflow files, logs, issue comments, or PR text.
+# This diagnostic does NOT add/move items, alter labels, dispatch agents, or merge PRs.
+name: SaaSFactory Projects V2 connection check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saasfactory-projects-v2-check
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.SAASFACTORY_PROJECTS_V2_TOKEN }}
+      PROJECT_OWNER: totorina47501-wq
+      PROJECT_NUMBER: '2'
+    steps:
+      - name: Check secret presence (never print the value)
+        shell: bash
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Missing Actions secret SAASFACTORY_PROJECTS_V2_TOKEN. Create a classic PAT with project scope (plus repo for private repositories)."
+            exit 1
+          fi
+      - name: Verify the personal project and Status options (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(gh api graphql \
+            -f query='query($login: String!, $number: Int!) { user(login: $login) { projectV2(number: $number) { id title url fields(first: 50) { nodes { ... on ProjectV2Field { id name } ... on ProjectV2SingleSelectField { id name options { id name } } } } } } }' \
+            -f login="$PROJECT_OWNER" \
+            -F number="$PROJECT_NUMBER")"
+          echo "$response" | jq -e '.data.user.projectV2.id' >/dev/null || {
+            echo "::error::Projects V2 is inaccessible. Verify PAT project scope, project owner, project number and token expiry."
+            exit 1
+          }
+          title="$(echo "$response" | jq -r '.data.user.projectV2.title')"
+          url="$(echo "$response" | jq -r '.data.user.projectV2.url')"
+          if [ "$title" != 'SaaSFactory — Agents' ]; then
+            echo "::error::Unexpected project title. Refusing to validate a different project."
+            exit 1
+          fi
+          status="$(echo "$response" | jq -r '.data.user.projectV2.fields.nodes[] | select(.name == "Status") | .options[]?.name')"
+          if [ -z "$status" ]; then
+            echo "::error::Status field is not readable; verify Projects V2 access and field configuration."
+            exit 1
+          fi
+          {
+            echo '## Projects V2 connectivity confirmed (read-only)'
+            echo ""
+            echo "Project: [$title]($url)"
+            echo ""
+            echo 'Status options:'
+            while IFS= read -r option; do
+              echo "- $option"
+            done <<< "$status"
+            echo ""
+            echo 'No changes were made to the project.'
+          } >> "$GITHUB_STEP_SUMMARY"

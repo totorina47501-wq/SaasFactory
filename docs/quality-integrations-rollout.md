@@ -1,58 +1,38 @@
-# SaaS Factory — opt-in GitHub quality integration rollout
+# SaaSFactory — Optional quality integrations
 
-## Existing inventory (checked on main at 51cd9a8307f75164ed0050e5b483f47918783b15)
+## Verified baseline
 
-- `.github/workflows/ci.yml` already runs generator unit tests, independent generated-app install/test/typecheck/build and dry-run. **Do not duplicate or replace CI.**
-- `.github/workflows/saas-factory-agent-dispatch.yml` already schedules assignment every 30 minutes; keep approval, two-active-agent and file-scope guards.
-- `docs/agent-orchestration.md` describes dispatch reports; open Copilot PR **#7** implements **six-hour read-only operational reports** in `.github/workflows/saas-factory-agent-report.yml`, `.github/scripts/agent-report.cjs`, `tests/agent-report.test.cjs`, `package.json`, and `docs/agent-orchestration.md`. Do not duplicate or edit these files before #7 is reviewed and merged.
-- Open issue **#6** is already approved for bounded CI recovery (maximum two attempts); don't add a competing retry workflow.
-- No Renovate, Codecov integration configuration or coverage upload workflow existed on main when this branch was started.
+- The factory owns a reusable generator, specialized Copilot dispatcher and GitHub Actions CI; no extra dispatcher is introduced by this PR.
+- Agent dispatch and Projects V2 status synchronization request **every ten minutes**, with two concurrent Copilot missions maximum and one assignment per dispatch run.
+- GitHub Projects V2 **already exists**: [SaaSFactory — Agents, project #2](https://github.com/users/totorina47501-wq/projects/2). The existing read/write Projects V2 sync is documented in [projects-v2-status-sync.md](projects-v2-status-sync.md). Do **not** create another board, project status sync or issue auto-add workflow.
+- Six-hour read-only reports are delivered by the separate Copilot PR #7. Do not add a competing reporting workflow. The bounded CI-recovery proposal is issue #6, not part of this PR.
 
-## 1. Copilot automatic reviews — OWNER ACTION REQUIRED
+## Renovate: opt in via the GitHub App
 
-Repository Settings > Rules > Rulesets (or Settings > Copilot > Code review, where available on your plan): enable automatic Copilot code reviews for new PRs, request reviews on subsequent pushes if supported. Keep mandatory human approvals, required status checks and branch protections unchanged. **A Copilot review is not a human approval.** This PR does not modify repository settings or add privileged automation.
+The versioned [Renovate configuration](../.github/renovate.json) uses the documented `config:recommended` preset, `dependencyDashboardApproval: false`, two concurrent update PRs, max one PR/hour, a Monday early-morning maintenance window (Europe/Paris), and grouped GitHub Actions/npm minor-patch updates. Auto-merge is explicitly disabled.
 
-## 2. Renovate — OWNER ACTION REQUIRED
+**Not automatically activated:** the repository owner must install the [Renovate GitHub App](https://github.com/apps/renovate) for this repository, review its permissions, then inspect the first dependency dashboard and proposed PR. Renovate PRs still require the normal review and CI gate.
 
-Review `.github/renovate.json`, install the [Renovate GitHub App](https://github.com/apps/renovate) **only for SaasFactory**, with least-privilege permissions. The config limits concurrency to two PRs and one PR per hour, schedules a Monday maintenance window, groups non-major npm updates and Actions, and explicitly disables auto-merge. Verify Renovate's dependency dashboard and its first PR before extending scope. Renovate may require changes to the schedule depending on its hosted app constraints.
+## Offline coverage and optional Codecov
 
-## 3. GitHub Projects — OWNER ACTION REQUIRED
+The [factory-quality-integrations workflow](../.github/workflows/factory-quality-integrations.yml) generates a local LCOV artifact for generator and dispatcher code using Node's test coverage reporter, with permissions limited to `contents: read`. It never changes the main CI or deploys a SaaS.
 
-Create a private **GitHub Projects** board called `SaaSFactory — Agents` with fields:
-- `Status`: Backlog, Approved, Assigned, Coding, PR Review, CI Blocked, Done.
-- `Priority`: P0 / P1 / P2.
-- `Agent`: Copilot / Human.
-- `Domain`: Generator / CI / Security / Documentation / Operations.
-- `Files scope`: text listing paths, with each GitHub issue also declaring its `Files:` line.
-- `PR`: link.
-Use an auto-add workflow for this repository's issues and PRs, plus built-in GitHub Projects workflows to mark closed/merged items done. **Never interpret a Project column as `agent:approved`**: explicit issue label remains mandatory. No project was created or third-party app installed by this PR.
+- Default: upload only the first-party GitHub Actions `coverage/lcov.info` artifact (14-day retention).
+- Optional external upload: only after explicitly configuring repository variable `CODECOV_ENABLED=true` and, when required, secret `CODECOV_TOKEN` and installing the [Codecov GitHub App](https://github.com/apps/codecov) for **SaasFactory only**.
+- Before opt-in, verify the real workflow succeeded and the LCOV artifact is nonempty. Until then, do not claim Codecov is active or coverage has been uploaded externally.
 
-## 4. Codecov — OWNER ACTION REQUIRED
+The local smoke check in `tests/factory-quality-config.test.cjs` verifies the reviewed opt-in defaults and Renovate schema shape; it does not validate Renovate cloud service or Codecov's API.
 
-The additional `factory-quality-integrations.yml` computes LCOV coverage using only built-in Node 22 testing and uploads a first-party GitHub artifact by default. This is additive to the existing CI. Review the first artifact and verify the LCOV report is not empty.
+## Copilot review and exclusions
 
-To enable optional Codecov uploading:
-1. Authorize the [Codecov GitHub App](https://github.com/apps/codecov) for **SaasFactory only**.
-2. Set repository Actions secret `CODECOV_TOKEN` if Codecov requires one (particularly for private repositories).
-3. Set Actions repository variable `CODECOV_ENABLED=true` **after** reviewing terms and permissions.
-4. Inspect checks on a harmless PR; remove the variable to stop third-party uploading.
+Copilot automated PR review can be configured via GitHub repository settings. It does not substitute for required human approvals and does not authorize automerge.
 
-## 5. SonarQube Cloud — REMOVED BY OWNER DECISION
+**Do not introduce SonarQube or Snyk.** They were excluded by the repository owner. Do not install extra SaaS providers, change secrets, enable external uploads or relax branch protections without an explicit decision.
 
-SonarQube / Snyk are not part of this integration batch. No SonarQube action, token, variable, external enrollment or scan is requested. Do not activate either tool without a separate owner request.
+## Rollback
 
-## 6. Missions and failure reports — ALREADY BEING BUILT
+1. Keep Codecov inactive by omitting or disabling `CODECOV_ENABLED`.
+2. Disable Renovate using the installed GitHub App's repository permissions if necessary.
+3. Remove or disable the optional quality workflow through a reviewed PR if GitHub coverage artifacts cause problems.
 
-Review and merge Copilot **PR #7** separately, after successful checks and human review. The proposed report covers Actions conclusions, SHA, active agent issues, PRs and blockers every six hours; its failures can be inspected through GitHub job summary and artifacts. Issue **#6** is the already-approved proposal for bounded CI recovery. This PR does **not** create a duplicate report/retry engine. For alerts, consider native GitHub Actions failure notifications and GitHub Projects filtered `CI Blocked` views; any external notification integration requires separate approval.
-
-## Before fusion
-
-1. Inspect the diff and confirm no overlap with PR #7 or issue #6.
-2. Verify `SaaS Factory CI` on this exact head SHA.
-3. Verify the extra quality workflow reports a nonempty LCOV artifact with optional Codecov upload **skipped** by default.
-4. Review privileges, dependency updater cadence and third-party costs; SonarQube is explicitly excluded.
-5. Request human review and explicit owner approval; do not bypass required checks or merge automatically.
-
-## GitHub Projects delivery status
-
-A GitHub Projects v2 board is a GitHub account-level resource, not a repository file. The current repository connector has no Projects creation/edit API permission. Therefore no board has been created. Use [GitHub Projects](https://github.com/users/totorina47501-wq/projects) to create the private board. Its complete field and workflow specification is above; do not invent a project URL or claim the board exists. The agent dispatcher remains label-driven, not board-driven.
+Report links to the exact SHA, CI run, coverage artifact and review decision; successful offline configuration tests do **not** prove hosted-provider availability.
