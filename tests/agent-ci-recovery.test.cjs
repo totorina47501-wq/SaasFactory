@@ -10,6 +10,18 @@ const WORKFLOW = fs.readFileSync(path.join(__dirname, '../.github/workflows/saas
 const REPO = 'totorina47501-wq/SaasFactory';
 const SHA = 'a'.repeat(40);
 
+test('quota exhaustion is a failed workflow outcome, including replay of its blocked run', async () => {
+  const comments=[];
+  await exercise({comments,runId:1});
+  await exercise({comments,runId:2});
+  const blocked=await exercise({comments,runId:3});
+  assert.equal(blocked.failures.length,1);
+  const replay=await exercise({comments,runId:3});
+  assert.equal(replay.report.decision,'blocked:attempt-limit-reached');
+  assert.equal(replay.failures.length,1);
+  assert.equal(replay.created.length,0);
+});
+
 test('CI executes the recovery security suite', () => {
   const ci=fs.readFileSync(path.join(__dirname,'../.github/workflows/ci.yml'),'utf8');
   assert.match(ci,/run: node --test tests\/agent-ci-recovery\.test\.cjs/);
@@ -162,7 +174,7 @@ function fixture(options = {}) {
       }
     }
   };
-  return {github, context, summary, comments, created, run};
+  return {github, context, summary, comments, created, run, failures:[]};
 }
 
 async function exercise(options = {}) {
@@ -170,7 +182,7 @@ async function exercise(options = {}) {
   process.env.EXPECTED_REPO = REPO;
   const state = fixture(options);
   try {
-    const report = await recover({...state, core: {summary: state.summary}});
+    const report = await recover({...state, core: {summary: state.summary, setFailed:message=>state.failures.push(message)}});
     return {...state, report};
   } finally {
     if (previous === undefined) delete process.env.EXPECTED_REPO;

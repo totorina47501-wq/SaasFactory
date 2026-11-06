@@ -94,6 +94,9 @@ module.exports = async ({github, context, core}) => {
   const report = {decision: 'ignored'};
   const finish = async () => {
     await writeSummary(core, report);
+    if (report.decision === 'blocked:attempt-limit-reached') {
+      core.setFailed('CI recovery blocked: the two-request quota for this PR/SHA is exhausted');
+    }
     return report;
   };
 
@@ -142,12 +145,12 @@ module.exports = async ({github, context, core}) => {
     const runId = Number(run.id);
     if (!Number.isSafeInteger(runId) || runId < 1) throw new Error('Invalid workflow run ID');
     report.runId = runId;
-    if (entries.some((entry) => entry.runId === runId)) {
-      report.decision = 'ignored:duplicate-failure';
-      return await finish();
-    }
     if (entries.some((entry) => entry.status === 'blocked')) {
       report.decision = 'blocked:attempt-limit-reached';
+      return await finish();
+    }
+    if (entries.some((entry) => entry.runId === runId)) {
+      report.decision = 'ignored:duplicate-failure';
       return await finish();
     }
 
