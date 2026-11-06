@@ -1171,6 +1171,18 @@
         {
           "kind": "issue",
           "number": 49
+        },
+        {
+          "kind": "issue",
+          "number": 43
+        },
+        {
+          "kind": "issue",
+          "number": 40
+        },
+        {
+          "kind": "issue",
+          "number": 41
         }
       ],
       "acceptance": [

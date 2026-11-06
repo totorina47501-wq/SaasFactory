@@ -1,9 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {posix} from 'node:path';
 
 const read = () => JSON.parse(readFileSync(new URL('../docs/catalog/factory-backlog-v1.json', import.meta.url), 'utf8'));
 const roles = new Set(['product-architect','generator-engineer','qa-engineer','security-engineer','platform-engineer','ux-accessibility','documentation-release']);
+function assertScope(file) {
+  assert.ok(!file.startsWith('/') && !file.includes('..') && !file.includes('\\'));
+  assert.match(file, /^[A-Za-z0-9._/-]+$/);
+  const pathWithoutDirectoryMarker=file.endsWith('/')?file.slice(0,-1):file;
+  assert.equal(posix.normalize(pathWithoutDirectoryMarker),pathWithoutDirectoryMarker,'noncanonical scope '+file);
+  assert.ok(pathWithoutDirectoryMarker.split('/').every(part=>part&&part!=='.'&&part!=='..'));
+}
+
+test('scope validation rejects alias paths that could hide a concurrent owner', () => {
+  for (const file of ['./.github/workflows/ci.yml','.github/./workflows/ci.yml','.github//workflows/ci.yml','modules/auth//','/tmp/file','../file']) {
+    assert.throws(()=>assertScope(file));
+  }
+  assert.doesNotThrow(()=>assertScope('.github/workflows/ci.yml'));
+  assert.doesNotThrow(()=>assertScope('modules/auth/'));
+});
 
 test('authorized backlog has unique real issue identities and bounded automation', () => {
   const backlog = read();
@@ -21,8 +37,23 @@ test('authorized backlog has unique real issue identities and bounded automation
     assert.equal(task.automationAuthorized, true);
     assert.ok(task.files.length && task.acceptance.length >= 3);
     for (const file of task.files) {
-      assert.ok(!file.startsWith('/') && !file.includes('..') && !file.includes('\\'));
-      assert.match(file, /^[A-Za-z0-9._/-]+$/);
+      assertScope(file);
+    }
+  }
+});
+
+test('starter and final QA cover optional speech, documents and analytics before release', () => {
+  const backlog=read(), tasks=new Map(backlog.tasks.map(t=>[t.issue,t]));
+  function ancestors(task, found=new Set()) {
+    for (const dep of task.dependsOn) if (dep.kind==='issue'&&!found.has(dep.number)) {
+      found.add(dep.number); ancestors(tasks.get(dep.number),found);
+    }
+    return found;
+  }
+  for (const key of ['SFV3-PROFILE','SFV3-QA','SFV3-SECURITY','SFV3-OPERATIONS']) {
+    const deps=ancestors(backlog.tasks.find(t=>t.key===key));
+    for(const optional of ['SFV3-SPEECH','SFV3-DOCUMENTS','SFV3-ANALYTICS']) {
+      assert.ok(deps.has(backlog.tasks.find(t=>t.key===optional).issue),key+' must validate '+optional);
     }
   }
 });
@@ -74,7 +105,8 @@ test('separate mission file scopes cannot race over the same files', () => {
   const tasks=read().tasks;
   for (let i=0;i<tasks.length;i++) for (let j=i+1;j<tasks.length;j++) {
     for (const a of tasks[i].files) for (const b of tasks[j].files) {
-      const overlaps=a===b||(a.endsWith('/')&&b.startsWith(a))||(b.endsWith('/')&&a.startsWith(b));
+      const left=a.toLowerCase(),right=b.toLowerCase();
+      const overlaps=left===right||(left.endsWith('/')&&right.startsWith(left))||(right.endsWith('/')&&left.startsWith(right));
       assert.ok(!overlaps, tasks[i].key+' and '+tasks[j].key+' overlap: '+a+' / '+b);
     }
   }
