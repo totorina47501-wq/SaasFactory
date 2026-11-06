@@ -14,7 +14,11 @@ test('dispatch workflow isolates a user token from checkout and refuses missing 
  assert.doesNotMatch(checkout,/COPILOT_DISPATCH_TOKEN/);
  assert.match(workflow,/if:.*github\.repository == 'totorina47501-wq\/SaasFactory'.*github\.ref == 'refs\/heads\/main'/);
  assert.doesNotMatch(workflow,/^\s+pull_request(?:_target)?:/m);
- assert.match(workflow,/workflow_run:\s*\n\s+workflows: \['SaaS Factory CI'\]/);
+ assert.match(workflow,/workflow_run:\s*\n\s+workflows: \['SaaS Factory CI', 'SaaS Factory trusted review signal'\]/);
+ assert.match(workflow,/github\.event\.workflow_run\.event == 'pull_request'/);
+ assert.match(workflow,/startsWith\(github\.event\.workflow_run\.head_branch, 'copilot\/'\)/);
+ assert.match(workflow,/github\.event\.workflow_run\.name == 'SaaS Factory trusted review signal'/);
+ assert.match(workflow,/github\.event\.workflow_run\.event == 'pull_request_review'/);
  assert.match(workflow,/types: \[completed\]/);
  assert.match(workflow,/github\.event\.workflow_run\.event == 'push'/);
  assert.match(workflow,/github\.event\.workflow_run\.head_branch == 'main'/);
@@ -123,4 +127,15 @@ test('assignment evidence requires a confirmed Copilot read-back',async()=>{
  assert.equal(denied.calls.filter(c=>c[0]==='assign').length,1);
  assert.deepEqual(denied.report.assignment,{issue:5,specialist:'platform-engineer',confirmed:false});
  assert.equal(denied.calls.filter(c=>c[0]==='label').length,0);
+});
+
+test('review signal has no privileged credentials or untrusted checkout',()=>{
+ const signal=fs.readFileSync(require('node:path').join(__dirname,'../.github/workflows/saas-factory-review-signal.yml'),'utf8');
+ assert.match(signal,/pull_request_review:/);
+ assert.match(signal,/permissions: \{\}/);
+ assert.match(signal,/github\.event\.review\.user\.login == 'copilot-pull-request-reviewer/);
+ assert.match(signal,/github\.event\.pull_request\.base\.ref == 'main'/);
+ assert.match(signal,/github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
+ assert.match(signal,/startsWith\(github\.event\.pull_request\.head\.ref, 'copilot\/'\)/);
+ assert.doesNotMatch(signal,/actions\/checkout|github-token:|secrets\.|pull_request_target:/);
 });

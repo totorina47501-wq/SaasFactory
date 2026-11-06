@@ -1,0 +1,14 @@
+name: SaaS Factory trusted review signal
+on:
+  pull_request_review:
+    types: [submitted]
+# An unprivileged notification only: no repository checkout, no user token, no secrets.
+permissions: {}
+jobs:
+  notify:
+    if: ${{ github.repository == 'totorina47501-wq/SaasFactory' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.event.pull_request.head.ref, 'copilot/') && (github.event.review.user.login == 'copilot-pull-request-reviewer[bot]' || github.event.review.user.login == 'copilot-pull-request-reviewer') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Emit non-privileged reviewed-PR signal
+        run: echo 'A trusted reviewer submitted a Copilot PR review; all authorization is rechecked by the main-only dispatcher.'
