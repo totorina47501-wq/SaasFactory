@@ -23,6 +23,24 @@ jobs:
     env:
       COPILOT_DISPATCH_TOKEN_CONFIGURED: ${{ secrets.COPILOT_DISPATCH_TOKEN != '' }}
     steps:
+      - name: Verify trusted review notification job before privileged dispatch
+        if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name == 'SaaS Factory trusted review signal' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const source = await github.rest.actions.getWorkflow({
+              owner: context.repo.owner, repo: context.repo.repo, workflow_id: run.workflow_id
+            });
+            if (source.data.path !== '.github/workflows/saas-factory-review-signal.yml') {
+              throw new Error('Review notification workflow path mismatch');
+            }
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner: context.repo.owner, repo: context.repo.repo, run_id: run.id, filter: 'latest', per_page: 100
+            });
+            if (!jobs.some(j => j.name === 'notify' && j.status === 'completed' && j.conclusion === 'success')) {
+              throw new Error('Review notification job not completed successfully');
+            }
       - name: Require Copilot user token
         shell: bash
         run: |
