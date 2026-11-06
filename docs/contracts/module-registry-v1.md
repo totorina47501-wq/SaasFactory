@@ -12,13 +12,13 @@ Tous les champs suivants sont requis, sauf `verification`, qui est requis pour `
 | --- | --- |
 | `contractVersion` | Entier exact `1`. |
 | `id` | Identifiant stable `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`, max. 64 caractères. |
-| `version` | Version numérique `MAJOR.MINOR.PATCH`, suffixe préversion facultatif. |
+| `version` | Version `MAJOR.MINOR.PATCH` conforme à SemVer, suffixe préversion et métadonnées de build facultatifs, max. 64 caractères. |
 | `description` | Texte non vide, max. 240 caractères. |
 | `category` | `identity`, `storage`, `jobs`, `audit`, `entitlements`, `ai`, `media`, `api` ou `other`. |
 | `maturity` | `reference`, `scaffold`, `implemented` ou `verified`. Un statut ne prétend pas à une capacité métier non livrée. |
 | `prerequisites` | 0–32 identifiants lisibles, uniques. Conditions documentaires/préconditions. |
 | `dependencies`, `incompatibilities` | 0–32 identifiants chacun, uniques, syntaxe d'ID ; le module ne peut se référencer lui-même. La résolution et la détection des cycles sont un lot séparé. |
-| `configuration` | Schéma fermé `{schemaVersion: 1, type: "object", additionalProperties: false, required: string[], properties: object}`. Max. 64 propriétés ; types `string`, `boolean`, `number`, `integer`, `enum`; enum max. 32 options. Seules les limites `minLength`, `maxLength`, `minimum`, `maximum` sont admises et cohérentes. Aucun `$ref`, évaluateur, motif regex ou champ extensible. |
+| `configuration` | Schéma fermé `{schemaVersion: 1, type: "object", additionalProperties: false, required: string[], properties: object}`. Max. 64 propriétés ; types `string`, `boolean`, `number`, `integer`, `enum`; enum de 1–32 options. `minLength`/`maxLength` sont entiers pour `string` ; `minimum`/`maximum` sont numériques pour `number` ou entiers pour `integer`. Aucun `$ref`, évaluateur, motif regex ou champ extensible. |
 | `permissions` | 0–32 chaînes uniques `namespace:action`, chacune max. 64 caractères. Une déclaration ne confère pas d'autorisation. |
 | `generatedFiles` | 0–128 chemins relatifs uniques, max. 200 caractères, sans chemin absolu, séparateur Windows, point/parent, composant caché ou préfixe lecteur. Chemins informatifs : l'écriture exige une table de correspondance de sources maintenue côté Factory. |
 | `tests` | 0–64 chemins relatifs sûrs et uniques, mêmes règles de chemin. |
@@ -26,9 +26,9 @@ Tous les champs suivants sont requis, sauf `verification`, qui est requis pour `
 | `security` | Objet fermé `{dataClassification: "public" \| "tenant" \| "sensitive", handlesSecrets: boolean, permissionsReviewed: boolean}`. |
 | `offline` | Objet fermé `{supported: boolean, networkRequired: boolean}` ; `supported: true` impose `networkRequired: false`. |
 | `update`, `rollback` | Instructions descriptives non vides, max. 500 caractères chacune ; jamais exécutées. |
-| `verification` | Liste 0–16 d'objets fermés `{kind: "test" \| "review" \| "ci" \| "measurement", reference: string}`. Une maturité `verified` exige au moins une preuve explicite non vide ; les preuves sont des références à vérifier, pas une attestation automatique. |
+| `verification` | Liste 0–16 d'objets fermés `{kind: "test" \| "review" \| "ci" \| "measurement", reference: string, version: string, scope: "implementation" \| "isolation" \| "generation" \| "migration" \| "security" \| "hardware"}`. `version` doit correspondre exactement au descripteur. Une maturité `verified` exige au moins une preuve explicite non vide, liée à une portée ; les références restent à vérifier, pas une attestation automatique. |
 
-Les limites de configuration optionnelles sont des nombres finis entre 0 et 1 000 000 ; minimum ne dépasse pas maximum, et minLength ne dépasse pas maxLength. Les clés `__proto__`, `prototype` et `constructor`, contrôles et chaînes avec espaces périphériques sont rejetées. Les tableaux ne contiennent pas de doublons.
+Les limites de configuration optionnelles sont des nombres finis entre 0 et 1 000 000 ; minimum ne dépasse pas maximum, et minLength ne dépasse pas maxLength. Les clés `__proto__`, `prototype` et `constructor`, contrôles, chaînes avec espaces périphériques et formats courants de secrets reconnaissables sont rejetés sans être recopiés dans l'erreur. Ce filtre heuristique n'est pas un scanner exhaustif. Les tableaux ne contiennent pas de doublons.
 
 ### Exemple neutre
 

@@ -1,4 +1,11 @@
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+export type DeepReadonly<T> = T extends (...args: infer Arguments) => infer Result
+  ? (...args: Arguments) => DeepReadonly<Result>
+  : T extends readonly (infer Item)[]
+    ? readonly DeepReadonly<Item>[]
+    : T extends object
+      ? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
+      : T;
 
 export type ModuleMaturity = 'reference' | 'scaffold' | 'implemented' | 'verified';
 export type ModuleCategory = 'identity' | 'storage' | 'jobs' | 'audit' | 'entitlements' | 'ai' | 'media' | 'api' | 'other';
@@ -6,6 +13,8 @@ export type ModuleCategory = 'identity' | 'storage' | 'jobs' | 'audit' | 'entitl
 export interface VerificationEvidence {
   kind: 'test' | 'review' | 'ci' | 'measurement';
   reference: string;
+  version: string;
+  scope: 'implementation' | 'isolation' | 'generation' | 'migration' | 'security' | 'hardware';
 }
 
 export interface ConfigurationProperty {
@@ -61,7 +70,7 @@ export class ContractError extends Error {
 }
 
 export const CONTRACT_VERSION: 1;
-export function validateModuleDescriptor(value: unknown): Readonly<ModuleDescriptor>;
+export function validateModuleDescriptor(value: unknown): DeepReadonly<ModuleDescriptor>;
 export function assertTenantContext(value: unknown): Readonly<TenantContext>;
 
 export interface LocalStorage {

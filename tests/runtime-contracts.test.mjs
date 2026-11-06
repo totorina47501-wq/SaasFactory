@@ -62,6 +62,11 @@ test('rejects unknown fields, including configuration extensions and executable 
   const withExecutableValue = descriptor();
   withExecutableValue.description = () => 'untrusted';
   expectCode(() => validateModuleDescriptor(withExecutableValue), 'INVALID_INPUT');
+  const suspectedSecret = descriptor();
+  const token = 'ghp_' + 'a'.repeat(24);
+  suspectedSecret.description = token;
+  assert.throws(() => validateModuleDescriptor(suspectedSecret), error =>
+    error instanceof ContractError && error.code === 'INVALID_INPUT' && !error.message.includes(token));
   const withAccessor = descriptor();
   Object.defineProperty(withAccessor, 'description', {
     enumerable: true,
@@ -70,6 +75,15 @@ test('rejects unknown fields, including configuration extensions and executable 
     },
   });
   expectCode(() => validateModuleDescriptor(withAccessor), 'INVALID_INPUT');
+  const withArrayAccessor = descriptor();
+  withArrayAccessor.permissions.length = 1;
+  Object.defineProperty(withArrayAccessor.permissions, '0', {
+    enumerable: true,
+    get() {
+      throw new Error('must not execute');
+    },
+  });
+  expectCode(() => validateModuleDescriptor(withArrayAccessor), 'INVALID_INPUT');
 });
 
 test('rejects unsupported contract and configuration versions', () => {
@@ -77,6 +91,12 @@ test('rejects unsupported contract and configuration versions', () => {
   const wrongConfigVersion = descriptor();
   wrongConfigVersion.configuration.schemaVersion = 2;
   expectCode(() => validateModuleDescriptor(wrongConfigVersion), 'INVALID_VERSION');
+  const invalidSemver = descriptor();
+  invalidSemver.version = '1.0.0-';
+  expectCode(() => validateModuleDescriptor(invalidSemver), 'INVALID_INPUT');
+  const withBuildMetadata = descriptor();
+  withBuildMetadata.version = '1.0.0+build.7';
+  assert.equal(validateModuleDescriptor(withBuildMetadata).version, '1.0.0+build.7');
 });
 
 test('bounds descriptor fields and rejects unsafe generated paths', () => {
@@ -99,6 +119,12 @@ test('bounds descriptor fields and rejects unsafe generated paths', () => {
     Array.from({ length: 65 }, (_, index) => [`field${index}`, { type: 'string' }]),
   );
   expectCode(() => validateModuleDescriptor(oversizedConfiguration), 'INVALID_INPUT');
+  const incompatibleLimits = descriptor();
+  incompatibleLimits.configuration.properties = { count: { type: 'integer', minimum: 1.5 } };
+  expectCode(() => validateModuleDescriptor(incompatibleLimits), 'INVALID_INPUT');
+  const emptyEnum = descriptor();
+  emptyEnum.configuration.properties = { mode: { type: 'enum', enum: [] } };
+  expectCode(() => validateModuleDescriptor(emptyEnum), 'INVALID_INPUT');
 });
 
 test('verified maturity requires explicit non-empty evidence', () => {
@@ -109,9 +135,19 @@ test('verified maturity requires explicit non-empty evidence', () => {
   expectCode(() => validateModuleDescriptor(emptyEvidence), 'INVALID_INPUT');
   const evidenced = {
     ...missingEvidence,
-    verification: [{ kind: 'test', reference: 'tests/local-search.test.mjs' }],
+    verification: [{
+      kind: 'test',
+      reference: 'tests/local-search.test.mjs',
+      version: '1.0.0',
+      scope: 'implementation',
+    }],
   };
   assert.equal(validateModuleDescriptor(evidenced).maturity, 'verified');
+  const staleEvidence = {
+    ...evidenced,
+    verification: [{ ...evidenced.verification[0], version: '0.9.0' }],
+  };
+  expectCode(() => validateModuleDescriptor(staleEvidence), 'INVALID_INPUT');
 });
 
 test('tenant context must be present, versioned and exact', () => {
