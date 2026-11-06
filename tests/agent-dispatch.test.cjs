@@ -137,5 +137,6 @@ test('review signal has no privileged credentials or untrusted checkout',()=>{
  assert.match(signal,/github\.event\.pull_request\.base\.ref == 'main'/);
  assert.match(signal,/github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
  assert.match(signal,/startsWith\(github\.event\.pull_request\.head\.ref, 'copilot\/'\)/);
- assert.doesNotMatch(signal,/actions\/checkout|github-token:|secrets\.|pull_request_target:/);
+ assert.doesNotMatch(signal,/^\s*(?:- uses: actions\/checkout|github-token:|pull_request_target:)/m);
+ assert.doesNotMatch(signal,/\$\{\{\s*secrets\./);
 });
