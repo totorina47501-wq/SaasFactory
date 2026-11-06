@@ -1,0 +1,1371 @@
+{
+  "schemaVersion": 1,
+  "repository": "totorina47501-wq/SaasFactory",
+  "authorizedAt": "2026-11-06",
+  "authorization": "Demande explicite du propriétaire : backlog complet et mode full auto. Autorisation bornée aux tâches enregistrées, sans déploiement, fournisseur, finance ni contournement de protections ou d'un refus d'autorisation.",
+  "limits": {
+    "maxActiveMissions": 2,
+    "maxAssignmentsPerRun": 1,
+    "maxCiRetriesPerPrSha": 2,
+    "scheduleCron": "*/10 * * * *"
+  },
+  "existingWork": [
+    {
+      "issue": 6,
+      "pullRequest": 16,
+      "role": "platform-engineer",
+      "statusAtSnapshot": "in-progress",
+      "automationAuthorized": true,
+      "files": [
+        ".github/workflows/saas-factory-agent-ci-recovery.yml",
+        ".github/scripts/agent-ci-recovery.cjs",
+        "tests/agent-ci-recovery.test.cjs",
+        ".github/workflows/ci.yml",
+        "docs/catalog/factory-backlog-v1.json"
+      ],
+      "note": "Réutiliser sans doublon. Reprise CI désactivée tant que le déclenchement Copilot n'est pas prouvé."
+    }
+  ],
+  "externalHolds": [
+    {
+      "pullRequest": 14,
+      "requiresExplicitAuthorization": true,
+      "automationMayRelease": false,
+      "reason": "Fusion refusée par la revue automatique de cette session, puis PR #14 observée fusionnée indépendamment via GitHub. Refus conservé comme historique ; aucune nouvelle tentative ou fusion indirecte effectuée ici.",
+      "active": false,
+      "status": "resolved-externally",
+      "observedMergeSha": "e7dfdfa03bad6af2f824cbfacb995387fd62feb9"
+    }
+  ],
+  "tasks": [
+    {
+      "key": "SFV3-AUTO",
+      "issue": 17,
+      "title": "Orchestration autonome : dépendances, revue automatique, fusion contrôlée et reprise",
+      "role": "platform-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        ".github/scripts/factory-orchestration.cjs",
+        ".github/scripts/agent-dispatch.cjs",
+        ".github/workflows/saas-factory-agent-dispatch.yml",
+        "tests/factory-orchestration.test.cjs",
+        "tests/agent-dispatch.test.cjs",
+        "docs/agent-orchestration.md",
+        "AGENTS.md",
+        "docs/implementation-contracts.md",
+        "docs/templates/implementation-contract.md",
+        ".github/agents/"
+      ],
+      "dependsOn": [],
+      "acceptance": [
+        "Étendre le workflow et le dispatcher existants, sans deuxième dispatcher ; conserver */10, deux missions actives et une affectation par passage. Appeler le coordinateur avant la sélection ; ne pas confondre missions en attente et actives.",
+        "Charger uniquement docs/catalog/factory-backlog-v1.json depuis le SHA main de l'événement. Seuls les numéros, rôles, Files et dépendances enregistrés et explicitement autorisés peuvent passer de agent:planned à agent:approved. Détecter cycles, champs inconnus, références absentes, clôtures not_planned, dépendances non fusionnées et périmètres divergents ; aucune promotion si preuves/API manquent.",
+        "Une dépendance PR exige merged=true ; une dépendance issue exige closed/completed ET preuve de PR liée fusionnée ou preuve d'acceptation explicitement prévue au catalogue. Ne jamais libérer une dépendance à partir d'un label ou d'une CI verte seulement.",
+        "Fusion automatique réservée aux PR du même dépôt et de main, liées exactement à une mission autorisée, modifications dans Files, auteur/branche Copilot attendus, non draft, aucun conflit, head SHA inchangé, base compatible, workflows CI requis authentifiés verts sur ce SHA, revue automatisée finale sans demandes non résolues ni changes_requested. Refuser les noms de checks usurpés, les API partielles et les revues sans fichiers effectivement examinés. Utiliser merge API avec expected head SHA ; ne pas activer allow_auto_merge ni modifier les protections.",
+        "Ne pas tenter de fusionner #14 : refus d'autorisation de cette session conservé comme trace. #14 a ensuite été observée fusionnée indépendamment au SHA e7dfdfa03bad6af2f824cbfacb995387fd62feb9 ; vérifier merged=true comme pour toute dépendance, sans réessayer une action refusée. Respecter les externalHolds actifs du catalogue. L'issue #6/PR #16 est une mission existante autorisée, à suivre sans doublon. Ne pas activer sa reprise comment-trigger tant que le mécanisme Copilot n'est pas prouvé ; pas de simulation présentée comme reprise réelle.",
+        "Ne checkout/exécuter que le SHA de main, jamais le code de PR avec un token d'écriture. Secret utilisateur uniquement étape API, pas de secret dans artefacts. Reprises bornées via #6, blocage après deux tentatives PR/SHA, pas de boucle de corrections ou de fusion.",
+        "Aligner les instructions de gouvernance sur la décision propriétaire full auto du 2026-11-06 pour le catalogue autorisé, sans supprimer les garde-fous CI, fournisseurs ou protections. Ajouter tests incluant nouvelles SHA, rejouements, conflits, sécurité du token, saturation, dépendance refusée et API défaillante ; intégrer les nouveaux tests dans le fichier de test dispatch déjà exécuté en CI."
+      ]
+    },
+    {
+      "key": "SFV3-ARCH",
+      "issue": 18,
+      "title": "Contrats communs des modules et interfaces runtime locales",
+      "role": "product-architect",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "docs/contracts/factory-runtime-v1.md",
+        "docs/contracts/module-registry-v1.md",
+        "docs/contracts/generated-module-v1.md",
+        "factory/contracts/",
+        "tests/runtime-contracts.test.mjs"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        }
+      ],
+      "acceptance": [
+        "Définir et valider les contrats versionnés ModuleDescriptor, TenantContext, LocalStorage, JobQueue, AuditSink, EntitlementProvider et LocalModelAdapter ; noms, entrées/sorties, erreurs et règles d'isolation communs pour les lots suivants.",
+        "ModuleDescriptor : id/version/description/category/maturity/prerequisites/dependencies/incompatibilities/configuration/permissions/generatedFiles/tests/hardware/security/offline/update/rollback ; maturités reference/scaffold/implemented/verified, preuve explicite avant verified.",
+        "Documenter architecture Factory Core / modules / projet généré indépendant / runtime local et conventions de migrations propres à chaque module ; aucun schéma métier Project3.",
+        "Tests des champs inconnus, versions, limites, contextes tenant absents et descripteurs non fiables ; ni hook shell ni code arbitraire issu du manifeste."
+      ]
+    },
+    {
+      "key": "SFV3-REG",
+      "issue": 19,
+      "title": "Registre opérationnel et résolution des modules",
+      "role": "generator-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "factory/module-registry.mjs",
+        "factory/module-resolver.mjs",
+        "docs/catalog/saas-capabilities-v1.json",
+        "docs/contracts/module-resolution-v1.md",
+        "tests/module-registry.test.mjs",
+        "tests/module-resolver.test.mjs"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 18
+        },
+        {
+          "kind": "pull_request",
+          "number": 14
+        }
+      ],
+      "acceptance": [
+        "Transformer le catalogue de #14 en registre exécutable conforme aux contrats ; conserver les références historiques sans les présenter comme modules disponibles.",
+        "Résolution topologique déterministe, dépendances transitives, versions supportées, cycles, incompatibilités, prérequis manquants, permissions et état offline ; échec fermé et diagnostics non sensibles.",
+        "Module non verified : sélection seulement si limitations expressément acceptées dans le contrat versionné ; aucune promotion de maturité implicite. Tests de graphes malveillants et de sélection stable."
+      ]
+    },
+    {
+      "key": "SFV3-GEN",
+      "issue": 20,
+      "title": "Générateur composable v2 et compatibilité v1",
+      "role": "generator-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "factory/composer.mjs",
+        "factory/generator-v2.mjs",
+        "factory/generation-report.mjs",
+        "generate.mjs",
+        "generate.d.mts",
+        "docs/generator-contract.md",
+        "docs/contracts/generator-v2.md",
+        "tests/generator-v2.test.mjs"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 19
+        }
+      ],
+      "acceptance": [
+        "Ajouter une entrée v2 et migration explicite sans modifier silencieusement schemaVersion:1 ni ses sorties contractuelles ; maintenir les exemples et tests v1.",
+        "Composer fichiers déclarés des modules depuis sources Factory de confiance ; manifeste déterministe avec hashes et versions, contrôles collisions/casse/traversal/symlinks, dry-run sans effets et --write destination neuve.",
+        "Générer app indépendante, migrations/config/tests/docs et rapport d'installation ; ne jamais exécuter un hook ou une commande déclarée par le manifeste.",
+        "Tests combinatoires, dépendances/incompatibilités, secret, chemins hostiles, échec avant première écriture, répétition et refus d'écrasement."
+      ]
+    },
+    {
+      "key": "SFV3-INTAKE",
+      "issue": 21,
+      "title": "Intake complet, manifeste versionné et plan de réalisation",
+      "role": "product-architect",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "intake.mjs",
+        "factory/intake-v2.mjs",
+        "factory/intake-migrations.mjs",
+        "docs/contracts/saas-intake-v2.md",
+        "docs/prompts/chatgpt-saas-intake-v2.md",
+        "examples/intake-v2.json",
+        "tests/intake-v2.test.mjs"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 20
+        },
+        {
+          "kind": "pull_request",
+          "number": 14
+        }
+      ],
+      "acceptance": [
+        "Étendre le travail de #14 ; compatibilité intakeVersion:1, nouvelle version pour toute rupture et migration testée explicite.",
+        "Brief vers validation stricte, détection de secrets sans les recopier dans erreurs y compris noms de champs inconnus/dupliqués, sélection de modules, cohérence MVP et priorités P0/P1/P2.",
+        "Produire contrats d'implémentation, rôles spécialistes, dépendances, fonctionnalités manquantes, limitations acceptées, rapport complet dry-run et configuration du générateur ; aucune création implicite d'issue depuis un brief non autorisé.",
+        "Tests faux positifs, secrets dans diagnostics, champs inconnus/dupliqués, dépendances absentes, version non supportée, idempotence et déterminisme."
+      ]
+    },
+    {
+      "key": "SFV3-DB",
+      "issue": 22,
+      "title": "Module PostgreSQL générique, migrations et seed synthétique",
+      "role": "generator-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "modules/database/",
+        "tests/database.test.mjs",
+        "docs/modules/database.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 20
+        }
+      ],
+      "acceptance": [
+        "Schéma indépendant par SaaS, migrations versionnées neuves pour users/orgs/memberships/audit et extensions modules ; contraintes FK/unique, index, transactions et politique d'accès tenant explicite.",
+        "Adaptateur de persistance local conforme au contrat ; seed exclusivement synthétique ; PostgreSQL local optionnel via Compose sans cloud.",
+        "Tests migrations sur DB vierge et montée de versions, rollback non destructeur documenté, contraintes, transactions annulées et données inter-tenant ; inclure commandes locales reproductibles."
+      ]
+    },
+    {
+      "key": "SFV3-AUTH",
+      "issue": 23,
+      "title": "Comptes et authentification locale sécurisée",
+      "role": "security-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "modules/auth/",
+        "tests/auth.test.mjs",
+        "docs/modules/auth.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 22
+        }
+      ],
+      "acceptance": [
+        "Inscription, login/logout, hachage robuste salé (scrypt avec paramètres et limites explicites ou Argon2), sessions persistantes révocables, cookies HttpOnly/SameSite/Secure selon mode, CSRF et vérification origine.",
+        "Reset local par jeton aléatoire à usage unique, expiration et canal local contrôlé ; jamais de bypass auth, code fixe universel ou retour de secret en réponse publique.",
+        "Rate limiting login/reset, rotation et révocation sessions, validation entrées, erreurs non énumérantes, logs non sensibles ; tests fixation, brute force, CSRF, reset expiré/rejoué et persistance."
+      ]
+    },
+    {
+      "key": "SFV3-TENANT",
+      "issue": 24,
+      "title": "Organisations, membres et RBAC multi-tenant",
+      "role": "security-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "modules/tenancy/",
+        "tests/tenancy.test.mjs",
+        "docs/modules/tenancy.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 23
+        }
+      ],
+      "acceptance": [
+        "Workspaces/orgs, memberships, invitations locales sécurisées, rôles et permission matrix explicite ; administration et changements de rôle avec journal d'audit.",
+        "Tenant dérivé de session et membership serveur, jamais d'un header/ID fourni sans autorisation ; accès DB, documents, jobs et exports contrôlés par TenantContext.",
+        "Tests refus inter-tenant, escalade verticale/horizontale, suppression membership, invitations expirées, transactions et invariant dernier administrateur."
+      ]
+    },
+    {
+      "key": "SFV3-MFA",
+      "issue": 25,
+      "title": "TOTP optionnel et codes de récupération",
+      "role": "security-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/mfa/",
+        "tests/mfa.test.mjs",
+        "docs/modules/mfa.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 24
+        }
+      ],
+      "acceptance": [
+        "TOTP conforme RFC6238 optionnel, enrôlement/confirmation/désactivation avec reauth, secret chiffré localement avec clé propre à l'app.",
+        "Codes de récupération aléatoires stockés hachés, usage unique atomique et révocation ; protections anti-rejeu et tentatives limitées.",
+        "Tests vecteurs déterministes, dérive temporelle bornée, replays, récupération concurrente et isolation ; aucune clé d'exemple utilisable en production."
+      ]
+    },
+    {
+      "key": "SFV3-BACKUP",
+      "issue": 26,
+      "title": "Sauvegarde, restauration et non-régression des données",
+      "role": "platform-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/database-operations/",
+        "tests/database-operations.test.mjs",
+        "docs/modules/database-operations.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 22
+        },
+        {
+          "kind": "issue",
+          "number": 24
+        }
+      ],
+      "acceptance": [
+        "Sauvegarde/restauration PostgreSQL locale, métadonnées de version et intégrité, accès contrôlé, chemins sûrs et permissions fichiers privées.",
+        "Procédure de rollback et compatibilité modules ; restaurations isolées et non écrasantes par défaut, aucune destruction de données sans action explicite.",
+        "Tests dump synthétique/restitution, migration versions, sauvegarde corrompue, restauration répétée, interruption et absence de fuite secrets."
+      ]
+    },
+    {
+      "key": "SFV3-JOBS",
+      "issue": 27,
+      "title": "Jobs persistants bornés, annulation, quotas CPU/RAM et reprise",
+      "role": "platform-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "modules/jobs/",
+        "tests/jobs.test.mjs",
+        "docs/modules/jobs.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 22
+        },
+        {
+          "kind": "issue",
+          "number": 24
+        }
+      ],
+      "acceptance": [
+        "File locale persistante, états, idempotency keys, retries bornés avec backoff, leases/heartbeat, reprise après crash et protection double worker.",
+        "Annulation, timeout, nombre de workers/concurrence, budgets CPU/RAM et signalement clair des limites effectivement imposées par OS/conteneur.",
+        "Événements non sensibles et interface notifications ; tests crash, lease expirée, job corrompu, saturation, annulation et tenant. Aucun traitement coûteux lancé automatiquement."
+      ]
+    },
+    {
+      "key": "SFV3-STORAGE",
+      "issue": 30,
+      "title": "Stockage privé local, uploads validés et rétention",
+      "role": "security-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "modules/private-storage/",
+        "tests/private-storage.test.mjs",
+        "docs/modules/private-storage.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 24
+        },
+        {
+          "kind": "issue",
+          "number": 27
+        }
+      ],
+      "acceptance": [
+        "Uploads bornés et streamés vers stockage privé, noms générés serveur, refus traversal/symlink, hashes SHA256, déduplication sans fuite tenant et ACL à chaque accès.",
+        "Validation réelle signature/contenu avec allowlist formats, limites taille, chemins temporaires privés, quarantaine et refus fichiers actifs/dangereux ; ne pas se fier au MIME client.",
+        "Suppression/rétention jobs, nettoyage temporaires/crash, exports contrôlés et audit ; documenter limites d'effacement physique SSD, ne pas promettre un effacement matériel.",
+        "Tests accès direct non autorisé, attaques noms/archives, contenu mal étiqueté, fichiers corrompus, quota, annulation et suppression."
+      ]
+    },
+    {
+      "key": "SFV3-INGEST",
+      "issue": 34,
+      "title": "RAG : extraction et ingestion documentaire locale",
+      "role": "generator-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "modules/rag-ingestion/",
+        "tests/rag-ingestion.test.mjs",
+        "docs/modules/rag-ingestion.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 30
+        }
+      ],
+      "acceptance": [
+        "Extraction TXT/Markdown/HTML nettoyé/PDF et DOCX local sans réseau, avec limites taille/pages/ratio d'expansion et contrôle documents corrompus.",
+        "Normalisation, chunking déterministe, métadonnées/source/page/offset, SHA256, doublons et versions documentaires ; transcriptions média seulement si validées.",
+        "Tests fixtures synthétiques de chaque format, HTML actif, zip bomb DOCX, PDF malformé, doublons et versions ; documenter dépendances open source et licences."
+      ]
+    },
+    {
+      "key": "SFV3-RETRIEVAL",
+      "issue": 38,
+      "title": "RAG : embeddings locaux, index vectoriel et recherche hybride",
+      "role": "generator-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "modules/rag-search/",
+        "tests/rag-search.test.mjs",
+        "docs/modules/rag-search.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 34
+        }
+      ],
+      "acceptance": [
+        "Abstraction embeddings CPU locaux avec batch/cache ; moteur de test déterministe explicitement distinct d'un modèle sémantique réel, aucun téléchargement en tests.",
+        "Index vectoriel local durable, recherche lexicale et hybride, ranking, filtres métadonnées, ACL document et isolation tenant appliquée avant restitution, citations/provenance.",
+        "Tests pertinence sur corpus synthétique avec seuils mesurés, filtres/permissions/tenant, dimensions incompatibles, index corrompu et absence de source pertinente.",
+        "Décrire modèles locaux optionnels : version/empreinte/licence/taille/RAM/CPU et installation explicite ; aucun appel API externe."
+      ]
+    },
+    {
+      "key": "SFV3-RAGLIFE",
+      "issue": 42,
+      "title": "RAG : indexation incrémentale, suppression et reprise",
+      "role": "generator-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "modules/rag-lifecycle/",
+        "tests/rag-lifecycle.test.mjs",
+        "docs/modules/rag-lifecycle.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 38
+        },
+        {
+          "kind": "issue",
+          "number": 27
+        }
+      ],
+      "acceptance": [
+        "Indexation initiale/incrémentale, réindexation, versions/changements de modèle, statistiques, suivi erreurs et reprise idempotente via jobs.",
+        "Suppression atomique des chunks/vecteurs/caches et propagation révocation ACL ; aucun vecteur orphelin ni résultat stale après suppression.",
+        "Tests crash milieu de batch, retry, suppression concurrente, rotation version, incohérence DB/index et conservation provenance."
+      ]
+    },
+    {
+      "key": "SFV3-LLM",
+      "issue": 46,
+      "title": "Adaptateurs LLM locaux et assistant fondé sur les sources",
+      "role": "generator-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/llm-local/",
+        "tests/llm-local.test.mjs",
+        "docs/modules/llm-local.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 42
+        }
+      ],
+      "acceptance": [
+        "Contrat LLM local désactivable ; au moins un adaptateur d'inférence open source réellement utilisable sur moteur installé CPU, streaming, timeout/annulation et limites usage.",
+        "Prompts versionnés par app, sorties schéma validé, logs sans données sensibles ; aucune simulation annoncée comme vraie IA.",
+        "RAG source-only avec citations, abstention sans source et séparation instructions/documents ; traiter documents comme contenu non fiable, aucun outil/action autorisé par texte ingéré.",
+        "Tests déterministes sans poids pour streaming, erreurs, schéma, injection et tenant ; procédure manuelle d'évaluation moteur réel et nomenclature des modèles."
+      ]
+    },
+    {
+      "key": "SFV3-VIDEO",
+      "issue": 36,
+      "title": "Vidéo locale : FFprobe, frames, thumbnails et extraction audio",
+      "role": "generator-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/video/",
+        "tests/video.test.mjs",
+        "docs/modules/video.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 30
+        },
+        {
+          "kind": "issue",
+          "number": 27
+        }
+      ],
+      "acceptance": [
+        "FFprobe réel : conteneur/durée/résolution/codec et MIME bornés ; validation avant traitement, stockage privé et consentement explicite.",
+        "FFmpeg sans shell ni arguments arbitraires : frames/miniatures/piste audio, jobs bornés, timeout/annulation, quotas, hash, temporaires et rétention.",
+        "Tests médias synthétiques générés localement, conteneur faux, durée/résolution excessive, codec interdit, erreur moteur, cleanup et isolation ; aucun traitement coûteux au démarrage."
+      ]
+    },
+    {
+      "key": "SFV3-AUDIO",
+      "issue": 39,
+      "title": "Audio local : validation, conversion, sous-titres et transcription éditable",
+      "role": "generator-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/audio/",
+        "tests/audio.test.mjs",
+        "docs/modules/audio.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 36
+        }
+      ],
+      "acceptance": [
+        "Upload WAV/MP3 et formats explicitement allowlistés, validation conteneur réelle, durée/métadonnées, conversion/normalisation locale et extraction vidéo réutilisée.",
+        "Modèle transcription versionné avec segments horodatés, validation/édition humaine de contenu via UI future, exports SRT/VTT échappés et contrôlés.",
+        "Consentement, droits fichiers, quotas, suppression/rétention ; tests bornes/segments chevauchants/moteur absent/transcriptions non validées refusées par RAG."
+      ]
+    },
+    {
+      "key": "SFV3-SPEECH",
+      "issue": 43,
+      "title": "Transcription et synthèse vocales open source optionnelles",
+      "role": "generator-engineer",
+      "priority": "p2",
+      "automationAuthorized": true,
+      "files": [
+        "modules/local-speech/",
+        "tests/local-speech.test.mjs",
+        "docs/modules/local-speech.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 39
+        }
+      ],
+      "acceptance": [
+        "Adaptateurs ASR et TTS hors ligne pour moteurs open source réellement installables, CPU ; horodatages si supportés et capacité explicitement déclarée.",
+        "Moteur déterministe de démonstration séparé, impossible à confondre avec transcription réelle ; application démarre sans modèles lourds.",
+        "Versions/licences/empreintes/taille/ressources et installation opt-in ; tests sans téléchargement pour consentement, durée, timeout, erreurs et sécurité des arguments."
+      ]
+    },
+    {
+      "key": "SFV3-IMAGE",
+      "issue": 37,
+      "title": "Images locales : validation, optimisation, carrousels et miniatures",
+      "role": "generator-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/images/",
+        "tests/images.test.mjs",
+        "docs/modules/images.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 30
+        }
+      ],
+      "acceptance": [
+        "Signatures réelles et décodage borné, redimensionnement/compression/miniatures/conversions compatibles, carrousels, métadonnées et politique EXIF explicite.",
+        "Hash/déduplication tenant, quotas mémoire/pixels/taille, stockage privé et cycle suppression/rétention réutilisé sans second upload engine.",
+        "Tests images synthétiques, decompression bomb, SVG actif rejeté ou nettoyé explicitement, faux MIME et formats corrompus."
+      ]
+    },
+    {
+      "key": "SFV3-DOCUMENTS",
+      "issue": 40,
+      "title": "Documents : OCR local optionnel, PDF export et pont RAG",
+      "role": "generator-engineer",
+      "priority": "p2",
+      "automationAuthorized": true,
+      "files": [
+        "modules/documents/",
+        "tests/documents.test.mjs",
+        "docs/modules/documents.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 37
+        },
+        {
+          "kind": "issue",
+          "number": 34
+        }
+      ],
+      "acceptance": [
+        "Réutiliser extracteurs RAG et stockage ; export PDF contrôlé avec templates neutres, aucun accès réseau des moteurs PDF/HTML.",
+        "OCR open source local optionnel, modèles explicites et limites pages/mémoire/temps ; sorties préparées pour ingestion avec provenance et validation.",
+        "Tests PDF synthétique, OCR stub distinct du réel, absence moteur, liens externes/HTML hostile, path et tenant."
+      ]
+    },
+    {
+      "key": "SFV3-BILLING",
+      "issue": 29,
+      "title": "Commerce simulé : plans, essais, abonnements et portail",
+      "role": "generator-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/billing-simulated/",
+        "tests/billing-simulated.test.mjs",
+        "docs/modules/billing-simulated.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 24
+        }
+      ],
+      "acceptance": [
+        "Free/Pro/Business, abonnements et essais simulés, états, renouvellement/annulation, factures de démonstration et historique local.",
+        "Événements/webhooks simulés signés localement, déduplication/idempotence, horloge injectée en tests ; pas de paiement ni provider activé.",
+        "Portail local documenté, contrat adaptateur futur séparé ; tests transitions, renouvellements concurrents, événements réordonnés, tenant et factures clairement factices."
+      ]
+    },
+    {
+      "key": "SFV3-ENTITLEMENTS",
+      "issue": 32,
+      "title": "Quotas produit et feature flags tenant",
+      "role": "generator-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/entitlements/",
+        "tests/entitlements.test.mjs",
+        "docs/modules/entitlements.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 29
+        }
+      ],
+      "acceptance": [
+        "Entitlements/feature flags dérivés plans et overrides autorisés ; quotas atomiques par tenant/période, réservations/consommation/remboursements en échec.",
+        "Interface commune pour API, IA, stockage et jobs ; distinguer quotas métier et limites matérielles jobs.",
+        "Tests course concurrente, renouvellement fenêtre, downgrade, doublons, changement fuseau et absence fuite inter-tenant."
+      ]
+    },
+    {
+      "key": "SFV3-NOTIFY",
+      "issue": 33,
+      "title": "Notifications internes, templates email et inbox locale",
+      "role": "generator-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/notifications/",
+        "tests/notifications.test.mjs",
+        "docs/modules/notifications.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 24
+        },
+        {
+          "kind": "issue",
+          "number": 27
+        }
+      ],
+      "acceptance": [
+        "Notifications persistantes internes, lecture/non-lu et préférences ; templates email échappés et boîte locale de développement, aucun SMTP distant.",
+        "Pont jobs via contrats, idempotence des envois et retries bornés sans seconde file de jobs ; permissions membre/tenant.",
+        "Tests templates hostiles, préférences, isolation, doublons et suppression/rétention ; aucune donnée sensible journalisée."
+      ]
+    },
+    {
+      "key": "SFV3-API",
+      "issue": 35,
+      "title": "API REST versionnée, OpenAPI, clés locales et webhooks",
+      "role": "security-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/api/",
+        "tests/api.test.mjs",
+        "docs/modules/api.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 24
+        },
+        {
+          "kind": "issue",
+          "number": 32
+        }
+      ],
+      "acceptance": [
+        "Routes REST v1, OpenAPI généré cohérent, schémas requêtes/réponses stricts, pagination bornée, erreurs stables et rate limiting persistant.",
+        "Clés API locales aléatoires hachées, scopes et expiration/révocation ; permissions et quotas tenant réutilisés, aucune authentification désactivée.",
+        "Webhooks simulés locaux avec signatures/anti-rejeu, pas de SSRF ni appels tiers ; tests ACL, clés révoquées, injection, pagination et limites."
+      ]
+    },
+    {
+      "key": "SFV3-OBS",
+      "issue": 31,
+      "title": "Observabilité locale, health checks, métriques et audit trail",
+      "role": "platform-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/observability/",
+        "tests/observability.test.mjs",
+        "docs/modules/observability.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 24
+        },
+        {
+          "kind": "issue",
+          "number": 27
+        }
+      ],
+      "acceptance": [
+        "Logs structurés avec redaction explicite et IDs corrélation ; health/liveness/readiness sans secrets, métriques locales, suivi erreurs et audit append-only borné.",
+        "Interface audit commune, diagnostics d'environnement et nettoyage planifié via jobs ; aucune dépendance monitoring SaaS.",
+        "Tests secrets/cookies/PII exclus logs, permissions lecture audit, panne DB/jobs, rotation et rétention."
+      ]
+    },
+    {
+      "key": "SFV3-ANALYTICS",
+      "issue": 41,
+      "title": "Analytics produit respectueux de la confidentialité",
+      "role": "generator-engineer",
+      "priority": "p2",
+      "automationAuthorized": true,
+      "files": [
+        "modules/analytics/",
+        "tests/analytics.test.mjs",
+        "docs/modules/analytics.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 31
+        },
+        {
+          "kind": "issue",
+          "number": 35
+        }
+      ],
+      "acceptance": [
+        "Événements métier versionnés, usage par fonctionnalité et agrégats par tenant ; dashboards via interface consommable par UX.",
+        "Minimisation/consentement configurable/rétention/suppression ; aucune collecte de contenu documents/prompts ni tracker externe.",
+        "Tests déduplication événements, agrégations, quotas, autorisations, export/suppression et absence fuite par faibles effectifs."
+      ]
+    },
+    {
+      "key": "SFV3-UX",
+      "issue": 28,
+      "title": "Design system, dashboard responsive et parcours auth accessibles",
+      "role": "ux-accessibility",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/ux/",
+        "tests/ux.test.mjs",
+        "docs/modules/ux.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 20
+        },
+        {
+          "kind": "issue",
+          "number": 24
+        }
+      ],
+      "acceptance": [
+        "Composants Next.js/TypeScript strict, navigation mobile, dark/light, dashboard, login/signup/reset et paramètres utilisateur branchés sur vraie auth locale.",
+        "Clavier/focus/labels/annonces erreurs et chargements ; aucune identité ou rôle injecté pour simuler un parcours authentifié.",
+        "Tests rendu, contrats routes, thèmes et accessibilité automatisée ; documenter vérifications clavier manuelles sans les déclarer réalisées."
+      ]
+    },
+    {
+      "key": "SFV3-I18N",
+      "issue": 44,
+      "title": "FR/EN, SEO et pages marketing neutres",
+      "role": "ux-accessibility",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/i18n-seo/",
+        "tests/i18n-seo.test.mjs",
+        "docs/modules/i18n-seo.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 28
+        }
+      ],
+      "acceptance": [
+        "Internationalisation FR/EN réelle des écrans, pluriels/dates/nombres, langue persistée sans cookie sensible et fallback explicite.",
+        "Métadonnées/canonical/sitemap/robots, pages marketing neutres ; aucune marque, texte métier ou contenu Project3.",
+        "Tests parité clés, caractères échappés, navigation locale, absence indexation routes privées et SEO des pages publiques."
+      ]
+    },
+    {
+      "key": "SFV3-ADMIN",
+      "issue": 45,
+      "title": "Onboarding, gestion des membres et administration locale",
+      "role": "ux-accessibility",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/admin/",
+        "tests/admin.test.mjs",
+        "docs/modules/admin.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 28
+        },
+        {
+          "kind": "issue",
+          "number": 29
+        },
+        {
+          "kind": "issue",
+          "number": 33
+        }
+      ],
+      "acceptance": [
+        "Onboarding organisation, invitations, rôles/membres, préférences, administration et portail facturation simulée branchés aux modules existants.",
+        "Dashboard d'exploitation avec quotas/statuts jobs/notifications et états erreur/chargement ; contrôle RBAC serveur sur chaque action.",
+        "Tests admin/non-admin et tenant, dernier propriétaire, annulation abonnement et notifications ; aucun superadmin global implicite."
+      ]
+    },
+    {
+      "key": "SFV3-MEDIAUI",
+      "issue": 47,
+      "title": "Lecteurs audio/vidéo accessibles et édition des transcriptions",
+      "role": "ux-accessibility",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/media-ui/",
+        "tests/media-ui.test.mjs",
+        "docs/modules/media-ui.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 28
+        },
+        {
+          "kind": "issue",
+          "number": 39
+        },
+        {
+          "kind": "issue",
+          "number": 37
+        }
+      ],
+      "acceptance": [
+        "Upload avec consentement, lecteurs audio/vidéo clavier, forme d'onde locale bornée, captions et carrousels accessibles ; fichiers via ACL privé.",
+        "Édition/validation transcriptions et exports SRT/VTT, erreurs/annulation/progression jobs et provenance RAG.",
+        "Tests permissions, boutons/timing clavier, gros fichiers, suppression pendant lecture et consentement non fourni."
+      ]
+    },
+    {
+      "key": "SFV3-CHATUI",
+      "issue": 50,
+      "title": "Chat local, sessions persistantes et sources RAG",
+      "role": "ux-accessibility",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/ai-chat/",
+        "tests/ai-chat.test.mjs",
+        "docs/modules/ai-chat.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 28
+        },
+        {
+          "kind": "issue",
+          "number": 46
+        }
+      ],
+      "acceptance": [
+        "Chat streaming local, sessions tenant persistantes, limites usage et prompts versionnés ; application utilisable génération désactivée.",
+        "Sources citées accessibles selon droits courants, abstention affichée et résultats retrieval sans LLM ; ne pas rendre de HTML arbitraire issu du modèle/doc.",
+        "Tests sessions croisées, injection Markdown/HTML, streaming interrompu et source supprimée ou devenue non autorisée."
+      ]
+    },
+    {
+      "key": "SFV3-PRIVACY",
+      "issue": 48,
+      "title": "Export utilisateur, effacement et rétention transversale",
+      "role": "security-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/privacy/",
+        "tests/privacy.test.mjs",
+        "docs/modules/privacy.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 42
+        },
+        {
+          "kind": "issue",
+          "number": 33
+        },
+        {
+          "kind": "issue",
+          "number": 29
+        },
+        {
+          "kind": "issue",
+          "number": 31
+        }
+      ],
+      "acceptance": [
+        "Exports contrôlés utilisateur/tenant avec inventaire et intégrité ; suppression coordonnée documents/vecteurs/fichiers/sessions/notifications/analytics si activés.",
+        "Jobs idempotents, statuts, reprises après panne, rétention et obligations de conservation configurables neutres sans reprendre de règles juridiques métier.",
+        "Tests vecteurs effectivement effacés, ACL, récupération interruptions, sauvegardes/rétention documentées et absence de suppression inter-tenant."
+      ]
+    },
+    {
+      "key": "SFV3-RUNTIME",
+      "issue": 49,
+      "title": "Runtime local Compose, diagnostics et artefacts de déploiement inactifs",
+      "role": "platform-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "modules/local-runtime/",
+        "tests/local-runtime.test.mjs",
+        "docs/modules/local-runtime.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 20
+        },
+        {
+          "kind": "issue",
+          "number": 22
+        },
+        {
+          "kind": "issue",
+          "number": 27
+        },
+        {
+          "kind": "issue",
+          "number": 31
+        }
+      ],
+      "acceptance": [
+        "Compose local Node/PostgreSQL/services optionnels, volumes privés, health checks, ressources bornées, versions fixées et configuration par app.",
+        "Diagnostics Node/FFmpeg/FFprobe/DB/modèles présents ; modèles et moteurs coûteux désactivés par défaut.",
+        "Artefacts déploiement neutres et Dockerfile non-root, secrets fournis au runtime jamais image ; aucune activation compte, DNS ou déploiement réel. Tests config sans réseau après installation."
+      ]
+    },
+    {
+      "key": "SFV3-PROFILE",
+      "issue": 52,
+      "title": "Starter complet composé et rapport de génération par capacité",
+      "role": "generator-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "factory/starter-profile.mjs",
+        "examples/saas-starter-v2.json",
+        "docs/contracts/starter-v2.md",
+        "tests/starter-v2.test.mjs"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 21
+        },
+        {
+          "kind": "issue",
+          "number": 25
+        },
+        {
+          "kind": "issue",
+          "number": 26
+        },
+        {
+          "kind": "issue",
+          "number": 32
+        },
+        {
+          "kind": "issue",
+          "number": 33
+        },
+        {
+          "kind": "issue",
+          "number": 35
+        },
+        {
+          "kind": "issue",
+          "number": 31
+        },
+        {
+          "kind": "issue",
+          "number": 44
+        },
+        {
+          "kind": "issue",
+          "number": 45
+        },
+        {
+          "kind": "issue",
+          "number": 47
+        },
+        {
+          "kind": "issue",
+          "number": 50
+        },
+        {
+          "kind": "issue",
+          "number": 48
+        },
+        {
+          "kind": "issue",
+          "number": 49
+        },
+        {
+          "kind": "issue",
+          "number": 43
+        },
+        {
+          "kind": "issue",
+          "number": 40
+        },
+        {
+          "kind": "issue",
+          "number": 41
+        }
+      ],
+      "acceptance": [
+        "Composer les vrais modules livrés en profil starter Next.js strict indépendant ; autorisations/minimisation des modules optionnels et absence de runtime Factory.",
+        "Installer chaque module via moteur existant, aucune copie parallèle ni réécriture des services ; rapports déterministes versions/fichiers/limites/prérequis.",
+        "Générer configurations locales, tests et docs ; vérification app démarrable sans GPU/LLM/ASR et sans fournisseurs. Ne pas annoncer production-ready."
+      ]
+    },
+    {
+      "key": "SFV3-QA",
+      "issue": 53,
+      "title": "Tests unitaires/intégration générés, Playwright et matrice de builds",
+      "role": "qa-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "tests/generated-app/",
+        "tests/acceptance/",
+        "playwright.factory.config.mjs",
+        ".github/workflows/ci.yml",
+        ".github/workflows/factory-quality-integrations.yml",
+        "package.json",
+        "docs/testing.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 52
+        }
+      ],
+      "acceptance": [
+        "Faire découvrir tous les tests Factory .mjs/.cjs et modules sans filtres qui excluent silencieusement des suites ; conserver les tests v1.",
+        "Matrice représentative de SaaS générés : install initiale autorisée, typecheck/build/unit/intégration/Playwright et exécution applicative sans appels tiers.",
+        "Vrais parcours signup/login/logout/reset/RBAC/org/billing simulé/RAG/media/quota/erreurs ; fixtures synthétiques, aucun bypass auth ou poids téléchargé.",
+        "Tests migrations/restore, chemin/collisions/déterminisme, fuite tenant/injections/suppression, accessibilité ; couverture mesurée de chaque module et jobs CI bornés sans secrets PR."
+      ]
+    },
+    {
+      "key": "SFV3-SECURITY",
+      "issue": 54,
+      "title": "Audit sécurité final et tests adversariaux reproductibles",
+      "role": "security-engineer",
+      "priority": "p0",
+      "automationAuthorized": true,
+      "files": [
+        "tests/security/",
+        "docs/security/threat-model.md",
+        "docs/security/verification-report.md",
+        "docs/security/local-model-security.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 53
+        }
+      ],
+      "acceptance": [
+        "Modèle de menaces global et preuves sur auth/sessions/CSRF/RBAC/tenants/stockage/médias/RAG/LLM/API/CI ; vérifier diagnostics secrets et instructions ingérées.",
+        "Fuzz entrées, SSRF réseau locale interdite, arguments subprocess, zip/decompression bombs, uploads corrompus, délais/quotas et suppression effective.",
+        "Réutiliser/réouvrir issues existantes pour écarts, ne pas dupliquer les corrections ni modifier les protections ; distinguer tests automatisés, tests non réalisés et risques résiduels."
+      ]
+    },
+    {
+      "key": "SFV3-OPERATIONS",
+      "issue": 55,
+      "title": "Validation exploitation locale et restauration complète",
+      "role": "platform-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "tests/operations/",
+        "docs/operations/runbook.md",
+        "docs/operations/disaster-recovery.md",
+        "docs/operations/resource-budgets.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 53
+        },
+        {
+          "kind": "issue",
+          "number": 26
+        },
+        {
+          "kind": "issue",
+          "number": 49
+        }
+      ],
+      "acceptance": [
+        "Exercice local reproductible backup/restore app complète, rotation logs, reprise jobs et index, corruption/volumes pleins/CPU/RAM saturés.",
+        "Runbooks diagnostics, upgrades/rollback modules/DB, purge/rétention et arrêt propre ; budgets matériels mesurés et aucune dépendance monitoring tiers.",
+        "Preuves avec versions/commandes/résultats et jeu synthétique ; aucune manipulation de données réelles ou déploiement externe."
+      ]
+    },
+    {
+      "key": "SFV3-RELEASE",
+      "issue": 56,
+      "title": "Documentation finale, maturités prouvées et préparation de livraison",
+      "role": "documentation-release",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "README.md",
+        "docs/FACTORY-COMPLETION-AUDIT.md",
+        "docs/FACTORY-RELEASE-READINESS.md",
+        "docs/LOCAL-MODEL-CATALOG.md",
+        "docs/GETTING-STARTED-FR.md",
+        "docs/GETTING-STARTED-EN.md",
+        "CHANGELOG.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 54
+        },
+        {
+          "kind": "issue",
+          "number": 55
+        },
+        {
+          "kind": "issue",
+          "number": 43
+        },
+        {
+          "kind": "issue",
+          "number": 40
+        },
+        {
+          "kind": "issue",
+          "number": 41
+        }
+      ],
+      "acceptance": [
+        "Mettre à jour l'audit à partir des preuves finales, chaque ligne fichiers/tests/SHA/CI ; aucun placeholder déclaré terminé et maturité verified seulement après test dans SaaS généré.",
+        "Guides FR/EN d'installation locale, scénario brief→manifest→dry-run→app→tests, sauvegarde/restauration et limites production-oriented.",
+        "Catalogue modèles avec versions/licences/tailles/empreintes/CPU/RAM, installation explicite et tests sans modèles ; checklist livraison sans déploiement ni activation fournisseurs.",
+        "Réconcilier backlog/issues/PR et Project existant, rapport des blocages restants, décisions et risques ; ne pas fermer un jalon seulement parce que la CI est verte."
+      ]
+    },
+    {
+      "key": "SFV3-PROJECTS",
+      "issue": 51,
+      "title": "Réconciliation du Project V2 existant et visibilité du backlog",
+      "role": "platform-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        ".github/scripts/projects-v2-sync.cjs",
+        "tests/projects-v2-sync.test.cjs",
+        "docs/projects-v2-status-sync.md",
+        "docs/contracts/projects-v2-sync-v1.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        }
+      ],
+      "acceptance": [
+        "Conserver le Project personnel #2 et le synchroniseur existant. Inspecter pagination, doublons, dry-run/apply et preuves de permissions ; ne pas créer de nouveau board ou cartes en double.",
+        "Vérifier que les nouvelles issues sont ajoutées par l'Auto-add natif déjà prévu ; si elles manquent, signaler explicitement la limite avant toute extension de contrat.",
+        "Afficher les états réels planned/waiting/assigned/review/CI blocked/done avec dépendances, ne pas assimiler closed/not_planned à livraison. Ne pas modifier secret, statut ou options du Project sans besoin et autorisation établis.",
+        "Tests fermeture non livrée, dépendances, API partielles et idempotence ; conserver la cadence six contrôles/heure et ne pas affecter Copilot depuis le synchroniseur."
+      ]
+    }
+  ]
+}

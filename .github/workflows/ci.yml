@@ -17,10 +17,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Test versioned SaaS intake handoff offline
+        run: node --test tests/intake.test.mjs
       - name: Test standalone generator offline
         run: npm test
       - name: Test agent dispatch policy offline
         run: node --test tests/agent-dispatch.test.cjs
+      - name: Test bounded CI recovery policy offline
+        run: node --test tests/agent-ci-recovery.test.cjs
       - name: Test read-only operations report offline
         run: node --test tests/agent-report.test.cjs
       - name: Validate specialist agent security contracts offline
@@ -63,3 +67,4 @@ jobs:
       - name: Build generated project
         working-directory: ${{ runner.temp }}/generated/atelier-exemple
         run: npm run build
+

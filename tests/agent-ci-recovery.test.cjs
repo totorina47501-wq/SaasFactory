@@ -10,6 +10,33 @@ const WORKFLOW = fs.readFileSync(path.join(__dirname, '../.github/workflows/saas
 const REPO = 'totorina47501-wq/SaasFactory';
 const SHA = 'a'.repeat(40);
 
+test('CI executes the recovery security suite', () => {
+  const ci=fs.readFileSync(path.join(__dirname,'../.github/workflows/ci.yml'),'utf8');
+  assert.match(ci,/run: node --test tests\/agent-ci-recovery\.test\.cjs/);
+});
+
+test('uppercase ledger statuses cannot reset the retry quota or bypass a block', async () => {
+  const comments=[];
+  await exercise({comments,runId:1});
+  await exercise({comments,runId:2});
+  for(const c of comments)c.body=c.body.replace('status=retry','status=RETRY');
+  const blocked=await exercise({comments,runId:3});
+  assert.equal(blocked.report.decision,'blocked:attempt-limit-reached');
+  assert.equal(comments.length,3);
+  comments[2].body=comments[2].body.replace('status=blocked','status=BLOCKED');
+  const replay=await exercise({comments,runId:4});
+  assert.equal(replay.report.decision,'blocked:attempt-limit-reached');
+  assert.equal(replay.created.length,0);
+});
+
+test('changes during ledger pagination invalidate eligibility before any write', async () => {
+  for(const drift of ['head','close','revoke','link','base','author']) {
+    const state=await exercise({drift});
+    assert.equal(state.created.length,0,drift);
+    assert.equal(state.report.decision,'ignored:eligibility-changed',drift);
+  }
+});
+
 test('workflow is failure-only, guarded, and checks out only trusted main with read-only contents', () => {
   assert.match(WORKFLOW, /@copilot comment trigger is unverified/);
   assert.match(WORKFLOW, /workflow_run:\s*\n\s+workflows: \["SaaS Factory CI"\]\s*\n\s+types: \[completed\]/);
@@ -86,6 +113,12 @@ function fixture(options = {}) {
         },
         listComments: async ({page}) => {
           if (options.failAt === 'comments') throw new Error('untrusted API detail');
+          if(options.drift==='head')pr.head.sha='b'.repeat(40);
+          if(options.drift==='close')pr.state='closed';
+          if(options.drift==='revoke')issue.labels=[];
+          if(options.drift==='link')pr.body='Fixes #7';
+          if(options.drift==='base')pr.base.ref='other';
+          if(options.drift==='author')pr.user.login='someone';
           return {data: comments.slice((page - 1) * 100, page * 100)};
         },
         createComment: async (request) => {
@@ -235,3 +268,4 @@ test('fails closed on GitHub API errors without exposing API details or writing 
     assert.match(state.summary.text, /blocked:verification-or-api-failure/);
   }
 });
+

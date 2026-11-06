@@ -29,7 +29,7 @@ function parseMarker(body) {
     sha: match[2].toLowerCase(),
     runId: Number(match[3]),
     attempt: Number(match[4]),
-    status: match[5]
+    status: match[5].toLowerCase()
   };
 }
 
@@ -155,6 +155,20 @@ module.exports = async ({github, context, core}) => {
       report.decision = `requested:attempt-${attempt}`;
     }
     report.attempt = attempt;
+    // Pagination can outlive approval or the PR head. Recheck immediately before writing.
+    // These API reads narrow the race window; they are not an atomic write precondition.
+    const latestPr = (await github.rest.pulls.get({owner, repo, pull_number: prNumber})).data;
+    const latestIssue = (await github.rest.issues.get({owner, repo, issue_number: Number(linkedIssue[1])})).data;
+    const latestLink = (latestPr.body || '').match(/(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#(\d+)\b/i);
+    if (latestPr.state !== 'open' || latestPr.base?.ref !== 'main' ||
+        latestPr.head?.ref !== run.head_branch || latestPr.head?.sha?.toLowerCase() !== report.sha ||
+        latestPr.head?.repo?.full_name !== expectedRepo ||
+        !COPILOT_LOGINS.has((latestPr.user?.login || '').toLowerCase()) ||
+        latestLink?.[1] !== linkedIssue[1] || latestIssue.state !== 'open' ||
+        !labelsOf(latestIssue).includes(APPROVAL_LABEL)) {
+      report.decision = 'ignored:eligibility-changed';
+      return await finish();
+    }
     await github.rest.issues.createComment({
       owner,
       repo,
@@ -168,3 +182,4 @@ module.exports = async ({github, context, core}) => {
     throw new Error('CI recovery failed closed; verification or GitHub API operation did not complete');
   }
 };
+
