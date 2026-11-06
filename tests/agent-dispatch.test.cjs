@@ -1,6 +1,22 @@
 'use strict';
 const test=require('node:test'), assert=require('node:assert/strict'), fs=require('node:fs');
 const dispatch=require('../.github/scripts/agent-dispatch.cjs');
+test('dispatch workflow isolates a user token from checkout and refuses missing credentials',()=>{
+ const workflow=fs.readFileSync(require('node:path').join(__dirname,'../.github/workflows/saas-factory-agent-dispatch.yml'),'utf8');
+ assert.match(workflow,/github-token: \$\{\{ secrets\.COPILOT_DISPATCH_TOKEN \}\}/);
+ assert.doesNotMatch(workflow,/github-token:.*GITHUB_TOKEN|\|\|.*github\.token/);
+ assert.match(workflow,/COPILOT_DISPATCH_TOKEN_CONFIGURED: \$\{\{ secrets\.COPILOT_DISPATCH_TOKEN != '' \}\}/);
+ assert.match(workflow,/test "\$COPILOT_DISPATCH_TOKEN_CONFIGURED" = 'true'/);
+ const checkout=workflow.slice(workflow.indexOf('- uses: actions/checkout@v4'),workflow.indexOf('- uses: actions/github-script@v7'));
+ assert.match(checkout,/ref: \$\{\{ github\.sha \}\}/);
+ assert.match(checkout,/persist-credentials: false/);
+ assert.doesNotMatch(checkout,/COPILOT_DISPATCH_TOKEN/);
+ assert.match(workflow,/if:.*github\.repository == 'totorina47501-wq\/SaasFactory'.*github\.ref == 'refs\/heads\/main'/);
+ assert.doesNotMatch(workflow,/pull_request:|pull_request_target:|workflow_run:/);
+ assert.match(workflow,/issues: read/);
+ assert.match(workflow,/pull-requests: read/);
+ assert.match(workflow,/cron: '\*\/10 \* \* \* \*'/);
+});
 async function exercise(issues=[],prs=[],opts={}){
  const calls=[];
  const github={
@@ -46,3 +62,4 @@ test('specialist assignment remains limited to one issue',async()=>{
  assert.equal(x.calls.filter(a=>a[0]==='assign').length,1);
  assert.equal(x.report.specialist,'generator-engineer');
 });
+

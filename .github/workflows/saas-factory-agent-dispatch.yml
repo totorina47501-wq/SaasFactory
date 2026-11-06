@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  issues: write
+  issues: read
   pull-requests: read
   actions: read
 concurrency:
@@ -13,15 +13,28 @@ concurrency:
   cancel-in-progress: false
 jobs:
   dispatch:
+    if: ${{ github.repository == 'totorina47501-wq/SaasFactory' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    env:
+      COPILOT_DISPATCH_TOKEN_CONFIGURED: ${{ secrets.COPILOT_DISPATCH_TOKEN != '' }}
     steps:
+      - name: Require Copilot user token
+        shell: bash
+        run: |
+          if ! test "$COPILOT_DISPATCH_TOKEN_CONFIGURED" = 'true'; then
+            echo '::error::Missing COPILOT_DISPATCH_TOKEN. Configure a repository-scoped user token; GITHUB_TOKEN cannot assign Copilot. See docs/copilot-dispatch-authorization.md.'
+            exit 1
+          fi
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/github-script@v7
         env:
           EXPECTED_REPO: totorina47501-wq/SaasFactory
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.COPILOT_DISPATCH_TOKEN }}
           script: |
             const fs = require('node:fs');
             const run = require('./.github/scripts/agent-dispatch.cjs');
@@ -33,3 +46,4 @@ jobs:
           path: agent-dispatch-report.json
           if-no-files-found: warn
           retention-days: 30
+
