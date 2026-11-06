@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {parseConfigText, validateConfig} from './generate.mjs';
+import capabilityCatalog from './docs/catalog/saas-capabilities-v1.json' with {type:'json'};
 
-const allowedKeys=['intakeVersion','product','market','mvp','scaffold','assumptions'];
+const allowedKeys=['intakeVersion','product','market','mvp','scaffold','capabilities','assumptions'];
 const productKeys=['name','slug','domain','summary'];
 const marketKeys=['audience','problem','monetization'];
 const featureKeys=['id','title','description','priority','owner'];
@@ -41,6 +42,18 @@ function verifyIntake(raw){
   if(!specialistRoles.has(f.owner))throw Error('invalid agent owner');
   return {id,title:string(f.title,'feature.title',120),description:string(f.description,'feature.description',1500),priority:f.priority,owner:f.owner};
  });
+ // Product capabilities are implementation requests, NOT new generator module identifiers.
+ const knownCapabilities=new Map(capabilityCatalog.capabilities.map(c=>[c.id,c]));
+ if(!Array.isArray(raw.capabilities)||raw.capabilities.length>30)throw Error('capabilities must be an array of at most 30 ids');
+ const selected=new Set();
+ const capabilities=raw.capabilities.map((id,i)=>{
+  if(typeof id!=='string'||!knownCapabilities.has(id)||selected.has(id))
+   throw Error('unknown or duplicate capability at index '+i);
+  selected.add(id);
+  const c=knownCapabilities.get(id);
+  return {id:c.id,title:c.title,status:c.status,category:c.category,scaffold:c.scaffold,owner:c.owner,
+   implementation:'draft-only',readyForUse:false};
+ });
  if(!Array.isArray(raw.assumptions)||raw.assumptions.length>20)throw Error('assumptions must be array <=20');
  const assumptions=raw.assumptions.map((a,i)=>string(a,'assumptions['+i+']',300));
  // The generator remains the authority for the scaffold schema and policy.
@@ -50,12 +63,13 @@ function verifyIntake(raw){
   defaultLanguage:raw.scaffold.defaultLanguage,deploymentTarget:raw.scaffold.deploymentTarget
  });
  // Do not carry customer details or AI prose into the generated starter.
- return {intakeVersion:1,product,market,mvp,assumptions,generatorConfig};
+ return {intakeVersion:1,product,market,mvp,capabilities,assumptions,generatorConfig};
 }
 function compileIntake(text){
  const verified=verifyIntake(parseConfigText(text));
  return {schemaVersion:1,kind:'saas-factory-intake-plan',projectSlug:verified.generatorConfig.projectSlug,
   generatorConfig:verified.generatorConfig,
+  capabilityRequests:verified.capabilities,
   missionDrafts:verified.mvp.map(f=>({
    id:f.id,title:f.title,description:f.description,priority:f.priority,
    specialist:f.owner,status:'draft',approved:false,files:null,

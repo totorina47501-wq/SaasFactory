@@ -22,6 +22,7 @@ Top-level required fields, with unknown fields rejected:
 | `market` | `audience`, `problem`, `monetization` (proposal only) |
 | `mvp` | 1–40 uniquely identified features: `id`, `title`, `description`, `priority` and `owner` |
 | `scaffold` | `modules`, `languages`, `defaultLanguage`, `deploymentTarget` |
+| `capabilities` | 0–30 distinct identifiers from `docs/catalog/saas-capabilities-v1.json`; they are requested **design capabilities**, never generator modules or activated providers |
 | `assumptions` | 0–20 concise statements |
 
 The generator's `validateConfig` is the **single source of truth** for slug, domain, modules, language and target semantics. The adapter compiles to `schemaVersion: 1` unchanged, with no extension to its existing schema. Product/market text is **not copied into the generated starter**.
@@ -40,3 +41,9 @@ Allowed priorities: `p0`, `p1`, `p2`. Owners: the seven existing `.github/agents
 ## Not implemented by this contract
 
 Parsing free-form text directly, automatic SaaS repository creation, project-specific GitHub issues, automatic Copilot dispatch to a new repository, approvals, production auth/billing/database, deployment or monetization are future work and must not be claimed as delivered.
+
+## Capability catalog and media safety
+
+The versioned [capability catalog](../catalog/saas-capabilities-v1.json) is the allowlist for `capabilities`. Each selection is returned as `capabilityRequests` in the read-only plan with `readyForUse: false` and `implementation: draft-only`, regardless of whether its nearest equivalent is an existing scaffold. **Only** `scaffold.modules` are passed to `generate.mjs`. The product brief must distinguish scaffolds from fully implemented product features.
+
+Video/audio examples are **reference architectures**, not code copied from Project3. Any real video/audio feature requires project-specific MIME/size/duration checks, private storage, opt-in explicit processing, cancellation/timeouts and constrained resources, retention/deletion, accessibility, abuse moderation and an audited provider cost/consent policy. FFmpeg, transcription, TTS, subtitle generation and background job workers are **not** shipped by this PR.

@@ -43,5 +43,12 @@
   },
   "assumptions": [
     "Product concept only: real database, auth provider and billing require separate implementation."
+  ],
+  "capabilities": [
+    "auth-rbac",
+    "subscriptions",
+    "notifications-email",
+    "privacy-export-delete",
+    "e2e-playwright"
   ]
 }

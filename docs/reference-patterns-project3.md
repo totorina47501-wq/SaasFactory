@@ -8,6 +8,9 @@
 | Billing and paid subscriptions | `lib/billing/`, `components/PricingCheckout.tsx`, `app/tarifs/` | `billing-test` | Simulated, real provider remains project-specific |
 | Data persistence and migrations | `supabase/migrations/`, `lib/supabase/` | None | New SaaS must design its own SQL, access controls and migrations |
 | AI assistants and retrieval | `lib/ai/`, `lib/mia/`, `components/MiaChat.tsx` | Mandatory `ai-disabled` | No real AI generation or Project3 prompts/data |
+| Video preparation, frames, audio extraction | `workers/video/README.md`, `workers/media-jobs/README.md`, `lib/media/validation.ts` | No video/audio generator module | Local offline patterns only: FFmpeg/FFprobe limits, synthetic tests, opt-in private processing; not a hosted service |
+| Audio transcription adapter | `lib/openai/audio.ts`, `tests/unit/openai-audio-adapter.test.ts` | `ai-disabled` | Provider-gated pattern; no default transcription or paid API |
+| Media asynchronous jobs and integrity | `workers/media-jobs/README.md`, `lib/evidence/sha256.ts`, `lib/media/retention.ts` | None | Worker isolation, hashing, cancellation, reuse and retention must be separately designed |
 | Media processing | `lib/media/`, `components/MediaLibrary.tsx` | `media` | Synthetic local fixture only |
 | Responsive dashboard UX | `app/dashboard/`, `components/DashboardMobileNavigation.tsx` | Base neutral Next.js UI | No inherited business UI/branding |
 | E2E testing | `tests/e2e/`, `playwright.config.ts` | Generated smoke + factory CI | No generated Playwright suite |
@@ -23,3 +26,9 @@
 5. Treat Project3's MIA, RAG, influence-law analysis, text corpora, migrations and product algorithms as **explicitly excluded** source content.
 
 **Verification boundary:** this catalog is grounded in observed directory/file names, not a line-by-line review or a claim that every source feature is production-ready.
+
+## Additional reusable capabilities to design
+
+The [machine-readable catalog](catalog/saas-capabilities-v1.json) tracks **26 generic capability requests** across video/audio, image processing, auth/RBAC, subscriptions, signed webhooks, database tenancy, privacy export/delete, AI assistants/RAG, notifications, analytics, E2E Playwright, i18n/SEO and admin observability. Items marked `proposed` are suggestions, not features asserted to exist in Project3. A `scaffold` status means a neutral example exists in SaaSFactory, never a finished integration.
+
+Never import Project3 source files, FFmpeg jobs, licensed assets, MIA prompts, recordings or real data into generated projects. The Intake Engine may **select the ID** of an architectural capability, then hand off an independently designed implementation contract after explicit approval.

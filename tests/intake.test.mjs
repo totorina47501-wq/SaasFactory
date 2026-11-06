@@ -17,6 +17,10 @@ test('generates a deterministic generator configuration and draft-only missions'
  assert.ok(a.missionDrafts.every(x=>x.approved===false&&x.files===null&&x.status==='draft'));
  assert.equal(a.safeguards.repoCreated,false);
  assert.equal(a.safeguards.readyForDispatch,false);
+ assert.equal(a.capabilityRequests.length,5);
+ assert.ok(a.capabilityRequests.every(c=>c.readyForUse===false&&c.implementation==='draft-only'));
+ assert.ok(a.capabilityRequests.some(c=>c.status==='missing'));
+
 });
 test('CLI outputs the same plan and never creates a destination',()=>{
  const output=JSON.parse(execFileSync(process.execPath,[cli,'--input',example],{encoding:'utf8'}));
@@ -34,6 +38,31 @@ test('fail closed on invalid versions, extra keys, invalid schema and role',()=>
   {assumptions:['not printable\nvalue']}
  ];
  for(const entry of invalid)assert.throws(()=>compileIntake(text(entry)));
+});
+test('explicit video/audio requirements are catalogued but never activated as scaffold modules',()=>{
+ const manifest={...base,capabilities:['video-ingest','video-extraction','audio-extraction','audio-transcription','audio-subtitles','audio-tts','media-job-queue']};
+ const result=compileIntake(JSON.stringify(manifest));
+ assert.deepEqual(result.capabilityRequests.map(x=>x.id),manifest.capabilities);
+ assert.ok(result.capabilityRequests.every(x=>!x.readyForUse));
+ assert.ok(!result.generatorConfig.modules.includes('audio-transcription'));
+ assert.equal(result.safeguards.providerActivated,false);
+});
+test('unknown/duplicate capabilities and module names fail closed',()=>{
+ for(const capabilities of [['video-ingest','video-ingest'],['unknown-module'],['audio transcription']])
+  assert.throws(()=>compileIntake(JSON.stringify({...base,capabilities})));
+ assert.throws(()=>compileIntake(JSON.stringify({...base,scaffold:{...base.scaffold,modules:['ai-disabled','video-extraction']}})));
+});
+test('capability catalog has unique safe ids and supported status vocabulary',()=>{
+ const catalog=JSON.parse(readFileSync(fileURLToPath(new URL('../docs/catalog/saas-capabilities-v1.json',import.meta.url)),'utf8'));
+ assert.equal(catalog.catalogVersion,1);
+ assert.ok(catalog.capabilities.length>=20);
+ const ids=catalog.capabilities.map(c=>c.id);
+ assert.equal(new Set(ids).size,ids.length);
+ for(const c of catalog.capabilities){
+  assert.match(c.id,/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+  assert.ok(['scaffold','missing','proposed'].includes(c.status));
+  assert.ok(['generator-engineer','qa-engineer','security-engineer','platform-engineer','product-architect','ux-accessibility','documentation-release'].includes(c.owner));
+ }
 });
 test('reject duplicate JSON keys and malformed input',()=>{
  assert.throws(()=>compileIntake(readFileSync(example,'utf8').replace('"intakeVersion": 1','"intakeVersion": 1, "intakeVersion": 1')),/Duplicate JSON key/);
