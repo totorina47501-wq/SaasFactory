@@ -24,13 +24,27 @@ const issue = (task, extra = {}) => ({
   ...extra
 });
 
-function orchestrationGithub({issues = [], allPrs = [], openPrs = [], dependencyMerged = {}, failDependency} = {}) {
+function orchestrationGithub({
+  issues = [], allPrs = [], openPrs = [], dependencyMerged = {}, detailedPrs = {},
+  pullFiles = {}, reviews = [], reviewComments = [], requestedReviewers = {users: [], teams: []},
+  reviewThreads = [], workflowRuns = [{
+    id: 100, created_at: '2026-11-06T09:00:00Z', run_attempt: 1,
+    workflow_id: 12, head_sha: headSha, event: 'pull_request',
+    status: 'completed', conclusion: 'success'
+  }], failDependency
+} = {}) {
   const calls = [];
+  const detailedReads = [];
+  const mergedPrs = [];
   const issuesByNumber = new Map(issues.map(issue => [issue.number, issue]));
   const github = {
     paginate: async (method, args) => {
       if (method === github.rest.issues.listForRepo) return issues;
       if (method === github.rest.pulls.list) return args.state === 'all' ? allPrs : openPrs;
+      if (method === github.rest.pulls.listFiles) return pullFiles[args.pull_number] || [];
+      if (method === github.rest.pulls.listReviews) return reviews;
+      if (method === github.rest.pulls.listReviewComments) return reviewComments;
+      if (method === github.rest.actions.listWorkflowRuns) return workflowRuns;
       throw new Error('unexpected paginate');
     },
     rest: {
@@ -50,20 +64,39 @@ function orchestrationGithub({issues = [], allPrs = [], openPrs = [], dependency
       },
       pulls: {
         list() {},
+        listFiles() {},
+        listReviews() {},
+        listReviewComments() {},
+        listRequestedReviewers: async () => ({data: requestedReviewers}),
         get: async args => {
           if (failDependency === args.pull_number) throw Error('partial API failure');
-          return {data: {merged: dependencyMerged[args.pull_number] === true}};
+          detailedReads.push(args.pull_number);
+          if (detailedPrs[args.pull_number]) return {data: detailedPrs[args.pull_number]};
+          return {data: {
+            merged: dependencyMerged[args.pull_number] === true,
+            body: allPrs.find(pr => pr.number === args.pull_number)?.body
+          }};
+        },
+        merge: async args => {
+          mergedPrs.push(args);
+          return {data: {merged: true}};
         }
       },
       actions: {
+        listWorkflowRuns() {},
         getWorkflow: async () => ({data: {
           id: 12, path: orchestration.REQUIRED_WORKFLOW.path,
           name: orchestration.REQUIRED_WORKFLOW.name, state: 'active'
         }})
       }
-    }
+    },
+    graphql: async () => ({
+      repository: {pullRequest: {reviewThreads: {
+        nodes: reviewThreads, pageInfo: {hasNextPage: false, endCursor: null}
+      }}}
+    })
   };
-  return {github, calls};
+  return {github, calls, detailedReads, mergedPrs};
 }
 
 async function runCoordinator(github, overrides = {}) {
@@ -173,6 +206,13 @@ test('issue dependency requires completed closure and a merged linked PR', async
     dependencyMerged: {[proof.number]: true, [secondProof.number]: true, 14: true}
   });
   assert.deepEqual((await runCoordinator(notPlanned.github)).promoted, []);
+
+  const staleLink = orchestrationGithub({
+    issues: [candidate, completed, completedSecond], allPrs: [proof, secondProof],
+    dependencyMerged: {[proof.number]: true, [secondProof.number]: true},
+    detailedPrs: {[proof.number]: {merged: true, body: 'Closes #999'}}
+  });
+  assert.deepEqual((await runCoordinator(staleLink.github)).promoted, []);
 });
 
 test('partial dependency API failure aborts before any promotion', async () => {
@@ -195,31 +235,177 @@ test('partial dependency API failure aborts before any promotion', async () => {
   assert.deepEqual(calls, []);
 });
 
+test('newest CI run wins regardless of an older run attempt number', async () => {
+  const staleSuccess = mergeMocks({
+    workflowRuns: [
+      {
+        id: 101, created_at: '2026-11-06T08:59:00Z', run_attempt: 2,
+        workflow_id: 12, head_sha: headSha, event: 'pull_request',
+        status: 'completed', conclusion: 'success'
+      },
+      {
+        id: 102, created_at: '2026-11-06T09:00:00Z', run_attempt: 1,
+        workflow_id: 12, head_sha: headSha, event: 'pull_request',
+        status: 'completed', conclusion: 'failure'
+      }
+    ]
+  });
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(staleSuccess)), false);
+  assert.equal(staleSuccess.calls.length, 0);
+});
+
+test('final issue reread must retain approval, role, file scope, and dependency metadata', async () => {
+  const base = coordinatorTask();
+  const changedIssues = [
+    issue(base, {labels: [{name: 'agent:role:platform-engineer'}, {name: 'priority:p0'}]}),
+    issue(base, {labels: [{name: 'agent:approved'}, {name: 'agent:role:qa-engineer'}, {name: 'priority:p0'}]}),
+    issue(base, {body: 'Files: README.md\nDepends-On: none'}),
+    issue(base, {body: `Files: ${base.files.join(', ')}\nDepends-On: #999`})
+  ];
+  for (const finalIssue of changedIssues) {
+    const candidate = mergeMocks({finalIssue});
+    assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(candidate)), false);
+    assert.equal(candidate.calls.length, 0);
+  }
+
+  const advancedMain = mergeMocks({finalMain: 'c'.repeat(40)});
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(advancedMain)), false);
+  assert.equal(advancedMain.calls.length, 0);
+
+  const approvalRevokedLate = mergeMocks({
+    finalIssueAfterFirstRead: issue(base, {
+      labels: [{name: 'agent:role:platform-engineer'}, {name: 'priority:p0'}]
+    })
+  });
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(approvalRevokedLate)), false);
+  assert.equal(approvalRevokedLate.calls.length, 0);
+
+  const mainAdvancedLate = mergeMocks({finalMainAfterFirstRead: 'c'.repeat(40)});
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(mainAdvancedLate)), false);
+  assert.equal(mainAdvancedLate.calls.length, 0);
+});
+
+test('current existing work is evaluated but CI workflow changes remain manual-review only', async () => {
+  const data = catalog();
+  const existing = data.existingWork[0];
+  const workIssue = issue({
+    issue: existing.issue, role: existing.role, priority: existing.priority,
+    files: existing.files, dependsOn: existing.dependsOn
+  }, {body: `Files: ${existing.files.join(', ')}`});
+  const listSummary = {number: existing.pullRequest, body: `Closes #${existing.issue}`};
+  const detailed = {
+    ...listSummary,
+    state: 'open',
+    changed_files: 1,
+    draft: false,
+    merged: false,
+    mergeable: true,
+    mergeable_state: 'clean',
+    base: {ref: 'main', sha: mainSha, repo: {full_name: orchestration.REPOSITORY}},
+    head: {ref: 'copilot/agent-copilot-fix-ci-recovery', sha: headSha,
+      repo: {full_name: orchestration.REPOSITORY}},
+    user: {login: 'Copilot'}
+  };
+  const {github, detailedReads} = orchestrationGithub({
+    issues: [workIssue],
+    openPrs: [listSummary],
+    allPrs: [listSummary],
+    detailedPrs: {[existing.pullRequest]: detailed},
+    pullFiles: {[existing.pullRequest]: [{filename: '.github/workflows/ci.yml'}]}
+  });
+  const result = await runCoordinator(github);
+  assert.deepEqual(detailedReads, [existing.pullRequest]);
+  assert.deepEqual(result.merged, []);
+  assert.deepEqual(result.blockers, [`manual-workflow-review:#${existing.pullRequest}`]);
+});
+
+test('list summaries are detailed before a real-format COMMENTED review can authorize merge', async () => {
+  const task = coordinatorTask();
+  const workIssue = issue(task);
+  const listSummary = {number: 45, body: 'Closes #17'};
+  const detail = {
+    ...listSummary,
+    state: 'open',
+    changed_files: 1,
+    draft: false,
+    merged: false,
+    mergeable: true,
+    mergeable_state: 'clean',
+    base: {ref: 'main', sha: mainSha, repo: {full_name: orchestration.REPOSITORY}},
+    head: {ref: 'copilot/task-17', sha: headSha, repo: {full_name: orchestration.REPOSITORY}},
+    user: {login: 'Copilot'}
+  };
+  const review = {
+    id: 8,
+    state: 'COMMENTED',
+    user: {login: 'copilot-pull-request-reviewer[bot]'},
+    commit_id: headSha,
+    submitted_at: '2026-11-06T09:00:00Z',
+    body: `### ✅ Approval recommended
+
+**No open issues** 🎉
+
+| File | Description |
+| --- | --- |
+| \`${task.files[0]}\` | Reviewed on this commit. |`
+  };
+  const result = orchestrationGithub({
+    issues: [workIssue],
+    openPrs: [listSummary],
+    allPrs: [listSummary],
+    detailedPrs: {45: detail},
+    pullFiles: {45: [{filename: task.files[0]}]},
+    reviews: [review],
+    reviewComments: [],
+    requestedReviewers: {users: [], teams: []}
+  });
+  const report = await runCoordinator(result.github);
+  assert.deepEqual(report.merged, [45]);
+  assert.deepEqual(result.mergedPrs.map(merge => merge.sha), [headSha]);
+  assert.ok(result.detailedReads.length >= 3);
+});
+
 function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflowId = 12,
-  review = true, comments = true, unresolved = false, changesRequested = false,
+  review = true, reviewBody, reviewHead = head, unresolved = false, changesRequested = false,
   pendingReviewRequest = false, lateReviewRequest = false, lateChangesRequested = false, changedFiles,
-  author = 'copilot-swe-agent[bot]', branch = 'copilot/task-17'} = {}) {
+  reportedChangedFiles, workflowRuns, finalIssue, finalIssueAfterFirstRead,
+  finalBase = mainSha, author = 'copilot-swe-agent[bot]', finalMain = mainSha,
+  finalMainAfterFirstRead, reviewUser = 'copilot-pull-request-reviewer[bot]',
+  branch = 'copilot/task-17'} = {}) {
   const calls = [];
   let reviewRequestCalls = 0;
   let reviewCalls = 0;
+  let issueReadCalls = 0;
+  let mainReadCalls = 0;
   const workflow = {id: 12, path: orchestration.REQUIRED_WORKFLOW.path, name: orchestration.REQUIRED_WORKFLOW.name};
+  const task = coordinatorTask();
+  const fileList = changedFiles || [task.files[0]];
+  const reviewText = reviewBody ?? `### ✅ Approval recommended
+
+**No open issues** 🎉
+
+| File | Description |
+| --- | --- |
+${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}`;
   const pr = {
     number: 45,
     body: 'Closes #17',
+    state: 'open',
     draft: false,
     merged: false,
+    changed_files: reportedChangedFiles ?? fileList.length,
     mergeable: true,
     mergeable_state: state,
     base: {ref: 'main', sha: base, repo: {full_name: orchestration.REPOSITORY}},
     head: {ref: branch, sha: head, repo: {full_name: orchestration.REPOSITORY}},
     user: {login: author}
   };
-  const task = coordinatorTask();
   const linkedIssue = issue(task);
   const github = {
     paginate: async (method) => {
-      if (method === github.rest.pulls.listFiles) return (changedFiles || [task.files[0]]).map(filename => ({filename}));
-      if (method === github.rest.actions.listWorkflowRuns) return [{
+      if (method === github.rest.pulls.listFiles) return fileList.map(filename => ({filename}));
+      if (method === github.rest.actions.listWorkflowRuns) return workflowRuns || [{
+        id: 100, created_at: '2026-11-06T09:00:00Z',
         workflow_id: ciWorkflowId, head_sha: head, event: 'pull_request',
         status: 'completed', conclusion: 'success', run_attempt: 1
       }];
@@ -227,16 +413,12 @@ function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflow
         reviewCalls++;
         const requestsChanges = changesRequested || (lateChangesRequested && reviewCalls > 1);
         return review ? [{
-          id: 8, user: {login: 'copilot-pull-request-reviewer[bot]'},
-          state: requestsChanges ? 'CHANGES_REQUESTED' : 'APPROVED',
-          commit_id: head, submitted_at: '2026-11-06T09:00:00Z'
+          id: 8, user: {login: reviewUser},
+          state: requestsChanges ? 'CHANGES_REQUESTED' : 'COMMENTED',
+          commit_id: reviewHead, body: reviewText, submitted_at: '2026-11-06T09:00:00Z'
         }] : [];
       }
-      if (method === github.rest.pulls.listReviewComments) return comments ? [{
-        pull_request_review_id: 8,
-        user: {login: 'copilot-pull-request-reviewer[bot]'},
-        commit_id: head, path: task.files[0]
-      }] : [];
+      if (method === github.rest.pulls.listReviewComments) return [];
       throw Error('unexpected paginate');
     },
     graphql: async () => ({
@@ -252,20 +434,44 @@ function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflow
           const pending = pendingReviewRequest || (lateReviewRequest && reviewRequestCalls > 1);
           return {data: {users: pending ? [{login: 'reviewer'}] : [], teams: []}};
         },
-        get: async () => ({data: {...pr, head: {...pr.head, sha: head}, base: {...pr.base, sha: mainSha}}}),
+        get: async () => ({data: {
+          ...pr, ...(finalBase !== mainSha ? {base: {...pr.base, sha: finalBase}} : {}),
+          head: {...pr.head, sha: head}, base: {...pr.base, sha: finalBase}
+        }}),
         merge: async args => {calls.push(args);return {data: {merged: true}}}
       },
+      issues: {
+        get: async () => {
+          issueReadCalls++;
+          return {data: issueReadCalls > 1 ? finalIssueAfterFirstRead || finalIssue || linkedIssue :
+            finalIssue || linkedIssue};
+        }
+      },
       actions: {listWorkflowRuns() {}},
-      repos: {getBranch: async () => ({data: {commit: {sha: mainSha}}})}
+      repos: {getBranch: async () => {
+        mainReadCalls++;
+        return {data: {commit: {sha: mainReadCalls > 1 ? finalMainAfterFirstRead || finalMain : mainSha}}};
+      }}
     }
   };
-  return {github, calls, pr, task, linkedIssue, workflow};
+  const tasks = orchestration.validateCatalog(catalog());
+  const issuesByNumber = new Map([[task.issue, linkedIssue]]);
+  return {
+    github, calls, pr, task, linkedIssue, workflow, tasks, issuesByNumber, allPrs: []
+  };
+}
+
+function mergeArgs(value) {
+  return {
+    ...value, issue: value.linkedIssue, owner: 'totorina47501-wq', repo: 'SaasFactory',
+    workflow: value.workflow, mainSha
+  };
 }
 
 test('merge requires authenticated CI and final review of changed files on the current head', async () => {
   const valid = mergeMocks();
   assert.equal(await orchestration.mergeEligiblePullRequest({
-    ...valid, issue: valid.linkedIssue, owner: 'totorina47501-wq', repo: 'SaasFactory', workflow: valid.workflow, mainSha
+    ...mergeArgs(valid)
   }), true);
   assert.equal(valid.calls.length, 1);
   assert.equal(valid.calls[0].sha, headSha);
@@ -275,20 +481,24 @@ test('merge requires authenticated CI and final review of changed files on the c
     {state: 'dirty'},
     {ciWorkflowId: 99},
     {review: false},
-    {comments: false},
+    {reviewUser: 'someone-else[bot]'},
+    {reviewBody: 'Approval recommended\n\nNo open issues'},
+    {reviewBody: `Approval recommended\n\nNo open issues\n\n| File | Description |\n| --- | --- |\n| \`README.md\` | Not the changed file. |`},
+    {reviewHead: 'd'.repeat(40)},
     {unresolved: true},
     {changesRequested: true},
     {pendingReviewRequest: true},
     {lateChangesRequested: true},
     {changedFiles: ['README.md']},
+    {reportedChangedFiles: 2},
+    {changedFiles: [coordinatorTask().files[0]], finalIssue: issue(coordinatorTask(), {state: 'closed'})},
+    {changedFiles: [coordinatorTask().files[0]], finalBase: 'c'.repeat(40)},
+    {changedFiles: ['.github/workflows/ci.yml']},
     {author: 'someone-else'},
     {branch: 'feature/task-17'}
   ]) {
     const invalid = mergeMocks(options);
-    assert.equal(await orchestration.mergeEligiblePullRequest({
-      ...invalid, issue: invalid.linkedIssue, owner: 'totorina47501-wq', repo: 'SaasFactory',
-      workflow: invalid.workflow, mainSha
-    }), false);
+    assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(invalid)), false);
     assert.equal(invalid.calls.length, 0);
   }
 });
@@ -296,10 +506,7 @@ test('merge requires authenticated CI and final review of changed files on the c
 test('new head SHA must have its own successful CI, review, and expected merge SHA', async () => {
   const newHead = 'c'.repeat(40);
   const current = mergeMocks({head: newHead});
-  assert.equal(await orchestration.mergeEligiblePullRequest({
-    ...current, issue: current.linkedIssue, owner: 'totorina47501-wq', repo: 'SaasFactory',
-    workflow: current.workflow, mainSha
-  }), true);
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(current)), true);
   assert.equal(current.calls[0].sha, newHead);
 });
 
@@ -310,26 +517,21 @@ test('merge never retries changed heads or already merged PRs', async () => {
       base: {ref: 'main', sha: mainSha}}
   });
   assert.equal(await orchestration.mergeEligiblePullRequest({
-    ...stale, issue: stale.linkedIssue, owner: 'totorina47501-wq', repo: 'SaasFactory',
-    workflow: stale.workflow, mainSha
+    ...mergeArgs(stale)
   }), false);
   assert.equal(stale.calls.length, 0);
 
   const replay = mergeMocks();
   replay.pr.merged = true;
   assert.equal(await orchestration.mergeEligiblePullRequest({
-    ...replay, issue: replay.linkedIssue, owner: 'totorina47501-wq', repo: 'SaasFactory',
-    workflow: replay.workflow, mainSha
+    ...mergeArgs(replay)
   }), false);
   assert.equal(replay.calls.length, 0);
 });
 
 test('merge rechecks reviewer requests immediately before merging', async () => {
   const lateRequest = mergeMocks({lateReviewRequest: true});
-  assert.equal(await orchestration.mergeEligiblePullRequest({
-    ...lateRequest, issue: lateRequest.linkedIssue, owner: 'totorina47501-wq',
-    repo: 'SaasFactory', workflow: lateRequest.workflow, mainSha
-  }), false);
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(lateRequest)), false);
   assert.equal(lateRequest.calls.length, 0);
 });
 

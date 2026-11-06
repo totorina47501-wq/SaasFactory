@@ -59,11 +59,20 @@ function validateCatalog(catalog) {
   assert(Array.isArray(catalog.existingWork), 'Catalog existing work is missing');
   for (const work of catalog.existingWork) {
     assertExactKeys(work, new Set([
-      'issue', 'pullRequest', 'role', 'statusAtSnapshot', 'automationAuthorized', 'files', 'note'
+      'issue', 'pullRequest', 'role', 'priority', 'dependsOn', 'statusAtSnapshot',
+      'automationAuthorized', 'files', 'note'
     ]), 'Existing work');
     assert(Number.isSafeInteger(work.issue) && Number.isSafeInteger(work.pullRequest) &&
-      ROLES.has(work.role) && work.automationAuthorized === true, 'Invalid existing work record');
+      ROLES.has(work.role) && /^p[012]$/.test(work.priority) &&
+      Array.isArray(work.dependsOn) && work.automationAuthorized === true,
+    'Invalid existing work record');
     assertScope(work.files);
+    for (const dependency of work.dependsOn) {
+      assertExactKeys(dependency, DEPENDENCY_KEYS, 'Existing work dependency');
+      assert(['issue', 'pull_request'].includes(dependency.kind) &&
+        Number.isSafeInteger(dependency.number) && dependency.number > 0,
+      'Invalid existing work dependency');
+    }
   }
 
   const tasks = new Map();
@@ -89,6 +98,16 @@ function validateCatalog(catalog) {
     }
   }
 
+  for (const work of catalog.existingWork) {
+    assert(!tasks.has(work.issue), 'Existing work duplicates a catalog task');
+    tasks.set(work.issue, {
+      issue: work.issue, pullRequest: work.pullRequest, role: work.role,
+      priority: work.priority, files: work.files,
+      dependsOn: work.dependsOn, automationAuthorized: work.automationAuthorized,
+      existingWork: true
+    });
+  }
+
   const visiting = new Set();
   const visited = new Set();
   function visit(issue) {
@@ -106,7 +125,7 @@ function validateCatalog(catalog) {
     visiting.delete(issue);
     visited.add(issue);
   }
-  for (const task of catalog.tasks) visit(task.issue);
+  for (const task of tasks.values()) visit(task.issue);
 
   for (const hold of catalog.externalHolds) {
     assertExactKeys(hold, new Set([
@@ -176,12 +195,14 @@ function taskMetadataMatches(task, issue, requireApproved = true) {
   const priorityLabels = labels.filter(label => /^priority:p[012]$/.test(label));
   const files = issueFiles(issue.body || '');
   const dependencies = issueDependencies(issue.body || '', task);
+  const noDeclaredLegacyDependencies = task.existingWork && task.dependsOn.length === 0 &&
+    !/^Depends-On:/im.test(issue.body || '');
   return !isUnplanned(labels) && (!requireApproved || labels.includes('agent:approved')) &&
     task.automationAuthorized === true &&
     roleLabels.length === 1 && roleLabels[0] === `agent:role:${task.role}` &&
     priorityLabels.length === 1 && priorityLabels[0] === `priority:${task.priority}` &&
     files && files.length === task.files.length && task.files.every(file => files.includes(file)) &&
-    sameDependencies(dependencies, task.dependsOn);
+    (noDeclaredLegacyDependencies || sameDependencies(dependencies, task.dependsOn));
 }
 
 function linkedIssueNumbers(body) {
@@ -241,7 +262,10 @@ async function dependenciesReady({github, owner, repo, task, tasks, issuesByNumb
         const result = await github.rest.pulls.get({owner, repo, pull_number: pr.number});
         cache.set(key, result.data);
       }
-      if (cache.get(key).merged === true) {
+      const mergedPr = cache.get(key);
+      const linkedIssues = linkedIssueNumbers(mergedPr.body || '');
+      if (mergedPr.merged === true && linkedIssues.length === 1 &&
+        linkedIssues[0] === dependency.number) {
         mergedProof = true;
         break;
       }
@@ -268,10 +292,34 @@ async function trustedCi(github, owner, repo, workflow, sha) {
   });
   const matching = runs.filter(run => run.workflow_id === workflow.id && run.head_sha === sha &&
     run.event === 'pull_request');
-  if (!matching.length) return false;
-  matching.sort((a, b) => (b.run_attempt || 0) - (a.run_attempt || 0) ||
-    String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  if (!matching.length || matching.some(run => !Number.isSafeInteger(run.id) || run.id < 1 ||
+    !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1 ||
+    !Number.isFinite(Date.parse(run.created_at)))) return false;
+  matching.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) ||
+    (Number(b.id) - Number(a.id)) ||
+    (a.id === b.id && b.run_attempt - a.run_attempt));
   return matching[0].status === 'completed' && matching[0].conclusion === 'success';
+}
+
+function reviewFiles(body) {
+  const files = new Set();
+  const lines = body.split(/\r?\n/);
+  let foundTable = false;
+  for (let index = 0; index < lines.length; index++) {
+    if (!/^\|\s*File\s*\|\s*Description\s*\|$/i.test(lines[index])) continue;
+    if (foundTable || !/^\|\s*:?-{3,}:?\s*\|\s*:?-{3,}:?\s*\|$/.test(lines[index + 1] || '')) {
+      return new Set();
+    }
+    foundTable = true;
+    for (index += 2; index < lines.length && /^\|/.test(lines[index]); index++) {
+      const row = lines[index].match(/^\|\s*`([^`]+)`\s*\|\s*[^|]+\|\s*$/);
+      if (!row) return new Set();
+      const candidate = row[1].trim();
+      if (!/^[A-Za-z0-9._/-]+$/.test(candidate) || candidate.includes('..')) return new Set();
+      files.add(candidate);
+    }
+  }
+  return foundTable ? files : new Set();
 }
 
 async function trustedReview({github, owner, repo, pr, changedFiles, headSha}) {
@@ -304,21 +352,23 @@ async function trustedReview({github, owner, repo, pr, changedFiles, headSha}) {
   if (reviews.some(review => review.state === 'CHANGES_REQUESTED')) return false;
 
   const finalReview = reviews.filter(review => BOT_REVIEWERS.has(review.user?.login) &&
-    review.state === 'APPROVED' && review.commit_id === headSha)
-    .sort((a, b) => new Date(b.submitted_at || 0) - new Date(a.submitted_at || 0))[0];
-  if (!finalReview) return false;
-  const examined = new Set(comments.filter(comment =>
-    comment.pull_request_review_id === finalReview.id &&
-    BOT_REVIEWERS.has(comment.user?.login) && comment.commit_id === headSha &&
-    changedFiles.includes(comment.path)).map(comment => comment.path));
+    review.commit_id === headSha)
+    .sort((a, b) => String(b.submitted_at || '').localeCompare(String(a.submitted_at || '')))[0];
+  if (!finalReview || finalReview.state !== 'COMMENTED' || typeof finalReview.body !== 'string' ||
+    !/\bApproval recommended\b/i.test(finalReview.body) ||
+    !/\bNo open issues\b/i.test(finalReview.body) ||
+    /\b(?:changes recommended|needs a closer look|human review|request changes)\b/i.test(finalReview.body)) return false;
+  const examined = reviewFiles(finalReview.body);
   return changedFiles.length > 0 && changedFiles.every(file => examined.has(file));
 }
 
-async function mergeEligiblePullRequest({github, owner, repo, pr, task, issue, workflow, mainSha}) {
+async function mergeEligiblePullRequest({
+  github, owner, repo, pr, task, issue, workflow, mainSha, tasks, issuesByNumber, allPrs,
+}) {
   if (pr.merged === true || pr.base?.repo?.full_name !== REPOSITORY || pr.head?.repo?.full_name !== REPOSITORY ||
     pr.base?.ref !== 'main' || pr.draft !== false ||
     !/^copilot\//.test(pr.head?.ref || '') ||
-    !['copilot', 'copilot-swe-agent[bot]'].includes(pr.user?.login) ||
+    !['copilot', 'copilot-swe-agent[bot]'].includes(pr.user?.login?.toLowerCase()) ||
     pr.base?.sha !== mainSha || pr.mergeable !== true || pr.mergeable_state !== 'clean') return false;
   if (linkedIssueNumbers(pr.body || '').filter(number => number === task.issue).length !== 1 ||
     linkedIssueNumbers(pr.body || '').length !== 1) return false;
@@ -332,32 +382,45 @@ async function mergeEligiblePullRequest({github, owner, repo, pr, task, issue, w
   const files = await github.paginate(github.rest.pulls.listFiles, {
     owner, repo, pull_number: pr.number, per_page: 100
   });
+  if (!Number.isSafeInteger(pr.changed_files) || pr.changed_files < 1 ||
+    files.length !== pr.changed_files || files.some(file => typeof file.filename !== 'string')) return false;
   const changedFiles = [...new Set(files.flatMap(file =>
     [file.filename, file.previous_filename].filter(Boolean)))];
   if (!changedFiles.length || changedFiles.some(file => !pathAllowed(file, task.files)) ||
-    changedFiles.some(file => file === REQUIRED_WORKFLOW.path)) return false;
+    changedFiles.some(file => file.startsWith('.github/workflows/'))) return false;
   if (!await trustedCi(github, owner, repo, workflow, pr.head.sha)) return false;
   if (!await trustedReview({github, owner, repo, pr, changedFiles, headSha: pr.head.sha})) return false;
 
-  const [latest, main] = await Promise.all([
+  const [latest, main, latestIssue] = await Promise.all([
     github.rest.pulls.get({owner, repo, pull_number: pr.number}),
-    github.rest.repos.getBranch({owner, repo, branch: 'main'})
+    github.rest.repos.getBranch({owner, repo, branch: 'main'}),
+    github.rest.issues.get({owner, repo, issue_number: task.issue})
   ]);
   const latestPr = latest.data;
-  if (latestPr.merged === true || latestPr.head?.sha !== pr.head.sha ||
+  if (latestPr.merged === true || latestPr.state !== 'open' || latestPr.head?.sha !== pr.head.sha ||
     latestPr.head?.ref !== pr.head.ref || latestPr.head?.repo?.full_name !== REPOSITORY ||
-    latestPr.user?.login !== pr.user?.login || latestPr.base?.repo?.full_name !== REPOSITORY ||
+    latestPr.user?.login?.toLowerCase() !== pr.user?.login?.toLowerCase() ||
+    latestPr.base?.repo?.full_name !== REPOSITORY ||
     linkedIssueNumbers(latestPr.body || '').length !== 1 ||
     linkedIssueNumbers(latestPr.body || '')[0] !== task.issue ||
-    latestPr.base?.sha !== main.data.commit?.sha || latestPr.base?.ref !== 'main' ||
+    latestPr.base?.sha !== mainSha || main.data.commit?.sha !== mainSha ||
+    latestPr.base?.ref !== 'main' ||
     latestPr.mergeable !== true ||
-    latestPr.mergeable_state !== 'clean' || latestPr.draft !== false) return false;
+    latestPr.mergeable_state !== 'clean' || latestPr.draft !== false ||
+    latestPr.changed_files !== pr.changed_files ||
+    !taskMatchesAuthorizedIssue(task, latestIssue.data)) return false;
+  const currentIssues = new Map(issuesByNumber);
+  currentIssues.set(task.issue, latestIssue.data);
+  if (!await dependenciesReady({
+    github, owner, repo, task, tasks, issuesByNumber: currentIssues, allPrs, cache: new Map()
+  })) return false;
   if (!await trustedReview({
     github, owner, repo, pr: latestPr, changedFiles, headSha: pr.head.sha
   })) return false;
-  const [finalPr, finalMain, finalReviewRequests, finalReviews] = await Promise.all([
+  const [finalPr, finalMain, finalIssue, finalReviewRequests, finalReviews] = await Promise.all([
     github.rest.pulls.get({owner, repo, pull_number: pr.number}),
     github.rest.repos.getBranch({owner, repo, branch: 'main'}),
+    github.rest.issues.get({owner, repo, issue_number: task.issue}),
     github.rest.pulls.listRequestedReviewers({owner, repo, pull_number: pr.number}),
     github.paginate(github.rest.pulls.listReviews, {owner, repo, pull_number: pr.number, per_page: 100})
   ]);
@@ -366,14 +429,24 @@ async function mergeEligiblePullRequest({github, owner, repo, pr, task, issue, w
   assert(Array.isArray(finalReviews), 'Final review evidence is incomplete');
   if (finalReviewRequests.data.users.length || finalReviewRequests.data.teams.length ||
     finalReviews.some(review => review.state === 'CHANGES_REQUESTED') ||
-    finalPr.data.merged === true || finalPr.data.head?.sha !== pr.head.sha ||
+    finalPr.data.merged === true || finalPr.data.state !== 'open' ||
+    finalPr.data.head?.sha !== pr.head.sha ||
     finalPr.data.head?.ref !== pr.head.ref || finalPr.data.head?.repo?.full_name !== REPOSITORY ||
-    finalPr.data.user?.login !== pr.user?.login ||
+    finalPr.data.user?.login?.toLowerCase() !== pr.user?.login?.toLowerCase() ||
     finalPr.data.base?.ref !== 'main' || finalPr.data.base?.repo?.full_name !== REPOSITORY ||
-    finalPr.data.base?.sha !== finalMain.data.commit?.sha || finalPr.data.mergeable !== true ||
+    finalPr.data.base?.sha !== mainSha || finalMain.data.commit?.sha !== mainSha ||
+    finalPr.data.changed_files !== pr.changed_files || finalPr.data.mergeable !== true ||
     finalPr.data.mergeable_state !== 'clean' || finalPr.data.draft !== false ||
     linkedIssueNumbers(finalPr.data.body || '').length !== 1 ||
-    linkedIssueNumbers(finalPr.data.body || '')[0] !== task.issue) return false;
+    linkedIssueNumbers(finalPr.data.body || '')[0] !== task.issue ||
+    !taskMatchesAuthorizedIssue(task, finalIssue.data)) return false;
+  const finalIssues = new Map(currentIssues);
+  finalIssues.set(task.issue, finalIssue.data);
+  if (!await dependenciesReady({
+    github, owner, repo, task, tasks, issuesByNumber: finalIssues, allPrs, cache: new Map()
+  }) || !await trustedReview({
+    github, owner, repo, pr: finalPr.data, changedFiles, headSha: pr.head.sha
+  })) return false;
   const result = await github.rest.pulls.merge({
     owner, repo, pull_number: pr.number, merge_method: 'merge', sha: pr.head.sha
   });
@@ -413,7 +486,8 @@ async function run({github, context, core, io = fs}) {
     const dependencyCache = new Map();
     const promote = [];
 
-    for (const task of tasks.values()) {
+    assert(main.data.commit?.sha === context.sha, 'Main advanced beyond the trusted catalog snapshot');
+    for (const task of catalog.tasks) {
       const issue = issuesByNumber.get(task.issue);
       if (issue && taskMatchesIssue(task, issue) &&
         await dependenciesReady({
@@ -446,14 +520,27 @@ async function run({github, context, core, io = fs}) {
         const task = tasks.get(linked[0]);
         const issue = issuesByNumber.get(linked[0]);
         if (!task || !issue || catalog.externalHolds.some(hold => hold.pullRequest === pr.number)) continue;
+        if (task.existingWork && task.pullRequest !== pr.number) {
+          report.blockers.push(`existing-work-pr-mismatch:#${pr.number}`);
+          continue;
+        }
+        const detailedPr = (await github.rest.pulls.get({owner, repo, pull_number: pr.number})).data;
         if (!await dependenciesReady({
           github, owner, repo, task, tasks, issuesByNumber, allPrs, cache: dependencyCache
         })) continue;
         const latestIssue = await github.rest.issues.get({owner, repo, issue_number: task.issue});
         if (!taskMatchesAuthorizedIssue(task, latestIssue.data)) continue;
+        if (detailedPr.changed_files > 0 && detailedPr.state === 'open' &&
+          (await github.paginate(github.rest.pulls.listFiles, {
+            owner, repo, pull_number: pr.number, per_page: 100
+          })).some(file => [file.filename, file.previous_filename].some(filename =>
+            filename?.startsWith('.github/workflows/')))) {
+          report.blockers.push(`manual-workflow-review:#${pr.number}`);
+          continue;
+        }
         if (await mergeEligiblePullRequest({
-          github, owner, repo, pr, task, issue: latestIssue.data,
-          workflow, mainSha: main.data.commit.sha
+          github, owner, repo, pr: detailedPr, task, issue: latestIssue.data,
+          workflow, mainSha: main.data.commit.sha, tasks, issuesByNumber, allPrs
         })) {
           report.merged.push(pr.number);
           break;

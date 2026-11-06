@@ -55,6 +55,7 @@ Une livraison ne peut être déclarée terminée que si : critères d'acceptatio
 - Aucune mutation Projects V2 tant que `SAASFACTORY_PROJECTS_V2_SYNC_ENABLED=true` n'est pas défini après inspection d'un dry-run.
 - Les labels pilotent l'autorisation et la progression ; GitHub Projects ne remplace jamais GitHub Issues, Reviews, checks, ni les garde-fous de branche.
 - La fusion humaine reste le défaut. La fusion automatique est limitée aux missions autorisées au catalogue v1, aux PR Copilot vers `main`, au périmètre exact, aux checks CI authentifiés sur le SHA courant et à une revue finale automatisée vérifiant les fichiers modifiés et l'absence de fils non résolus. Elle utilise le SHA attendu et n'active pas `allow_auto_merge` ni ne modifie les protections. Aucun changement de secrets, déploiement, transfert de données d'un autre dépôt, paiement ou activation fournisseur.
+- Les lectures REST et la mutation GitHub ne sont pas atomiques : une issue, une revue, une dépendance ou la branche de base peut changer entre la dernière vérification et la fusion. Une SHA attendue protège la tête de PR, pas l'état de l'issue ou la base ; les protections de branche et la revue humaine restent nécessaires.
 - Incident : désactiver la variable d'écriture, interrompre les exécutions concernées si nécessaire, consulter les résumés Actions, corriger par PR revue, puis relancer en dry-run.
 
 ## 7. Traçabilité et gestion du changement
