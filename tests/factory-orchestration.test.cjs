@@ -10,6 +10,15 @@ const catalogPath = path.join(__dirname, '../docs/catalog/factory-backlog-v1.jso
 const catalog = () => JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
 const mainSha = 'b'.repeat(40);
 const headSha = 'a'.repeat(40);
+const ciContext = runs => runs.map(run=>({repository:{full_name:orchestration.REPOSITORY},head_repository:{full_name:orchestration.REPOSITORY},pull_requests:[{number:45}],...run}));
+
+test('a different PR CI result cannot override the candidate failed check',async()=>{
+  const state=mergeMocks({workflowRuns:[
+    {id:100,workflow_id:12,head_sha:headSha,event:'pull_request',status:'completed',conclusion:'failure',run_attempt:1,created_at:'2026-11-06T09:00:00Z',pull_requests:[{number:45}]},
+    {id:101,workflow_id:12,head_sha:headSha,event:'pull_request',status:'completed',conclusion:'success',run_attempt:1,created_at:'2026-11-06T09:01:00Z',pull_requests:[{number:99}]}
+  ]});
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(state)),false);
+});
 
 test('dependency delivery needs canonical closure evidence beyond merged PR prose',async()=>{
   const data=catalog(), task=data.tasks.find(t=>t.key==='SFV3-ARCH');
@@ -116,7 +125,7 @@ function orchestrationGithub({
       if (method === github.rest.pulls.listFiles) return pullFiles[args.pull_number] || [];
       if (method === github.rest.pulls.listReviews) return reviews;
       if (method === github.rest.pulls.listReviewComments) return reviewComments;
-      if (method === github.rest.actions.listWorkflowRuns) return workflowRuns;
+      if (method === github.rest.actions.listWorkflowRuns) return ciContext(workflowRuns);
       throw new Error('unexpected paginate');
     },
     rest: {
@@ -666,12 +675,12 @@ ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}
       if (method === github.rest.pulls.listFiles) return fileEntries;
       if (method === github.rest.actions.listWorkflowRuns) {
         ciCalls++;
-        if (ciCalls > 1 && lateWorkflowRuns) return lateWorkflowRuns;
-        return workflowRuns || [{
+        if (ciCalls > 1 && lateWorkflowRuns) return ciContext(lateWorkflowRuns);
+        return ciContext(workflowRuns || [{
           id: 100, created_at: '2026-11-06T09:00:00Z',
           workflow_id: ciWorkflowId, head_sha: head, event: 'pull_request',
           status: 'completed', conclusion: 'success', run_attempt: 1
-        }];
+        }]);
       }
       if (method === github.rest.pulls.listReviews) {
         reviewCalls++;

@@ -419,12 +419,14 @@ async function loadWorkflow(github, owner, repo) {
   return result.data;
 }
 
-async function trustedCi(github, owner, repo, workflow, sha) {
+async function trustedCi(github, owner, repo, workflow, sha, number) {
   const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
     owner, repo, workflow_id: workflow.id, head_sha: sha, event: 'pull_request', per_page: 100
   });
   const matching = runs.filter(run => run.workflow_id === workflow.id && run.head_sha === sha &&
-    run.event === 'pull_request');
+    run.event === 'pull_request' && run.repository?.full_name === REPOSITORY &&
+    run.head_repository?.full_name === REPOSITORY && Array.isArray(run.pull_requests) &&
+    run.pull_requests.length === 1 && run.pull_requests[0]?.number === number);
   if (!matching.length || matching.some(run => !Number.isSafeInteger(run.id) || run.id < 1 ||
     !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1 ||
     !Number.isFinite(Date.parse(run.created_at)))) return false;
@@ -553,7 +555,7 @@ async function mergeEligiblePullRequest({
   const scopeFiles = [...new Set(files.flatMap(file =>
     [file.filename, file.previous_filename].filter(Boolean)))];
   if (!scopeFiles.length || scopeFiles.some(file => !pathAllowed(file, task.files))) return false;
-  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha)) return false;
+  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha, pr.number)) return false;
   if (!await trustedReview({github, owner, repo, pr, changedFiles: reviewedFiles, headSha: pr.head.sha})) return false;
 
   const [latest, main, latestIssue, currentPrs] = await Promise.all([
@@ -616,7 +618,7 @@ async function mergeEligiblePullRequest({
   }) || !await trustedReview({
     github, owner, repo, pr: finalPr.data, changedFiles: reviewedFiles, headSha: pr.head.sha
   })) return false;
-  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha)) return false;
+  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha, pr.number)) return false;
   const result = await github.rest.pulls.merge({
     owner, repo, pull_number: pr.number, merge_method: 'merge', sha: pr.head.sha
   });
