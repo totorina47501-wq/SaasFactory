@@ -423,6 +423,12 @@ async function trustedCi(github, owner, repo, workflow, sha) {
   return newestAttempt.status === 'completed' && newestAttempt.conclusion === 'success';
 }
 
+function pendingAutomatedReview(requested) {
+  // Owner notification requests are not branch-protection approvals. GitHub
+  // enforces required reviews; the catalog owner authorized automated review.
+  return requested.users.some(user => BOT_REVIEWERS.has(user.login));
+}
+
 function hasChangeRequest(reviews) {
   const latest = new Map();
   for (const review of [...reviews].sort((a,b)=>String(a.submitted_at||'').localeCompare(String(b.submitted_at||''))||a.id-b.id)) {
@@ -476,7 +482,7 @@ async function trustedReview({github, owner, repo, pr, changedFiles, headSha}) {
   ]);
   assert(Array.isArray(requested.data?.users) && Array.isArray(requested.data?.teams),
     'Review request evidence is incomplete');
-  if (requested.data.users.length || requested.data.teams.length) return false;
+  if (pendingAutomatedReview(requested.data)) return false;
   if (threads.some(thread => thread.isResolved !== true)) return false;
   if (hasChangeRequest(reviews)) return false;
 
@@ -568,7 +574,7 @@ async function mergeEligiblePullRequest({
   assert(Array.isArray(finalReviewRequests.data?.users) && Array.isArray(finalReviewRequests.data?.teams),
     'Final review request evidence is incomplete');
   assert(Array.isArray(finalReviews), 'Final review evidence is incomplete');
-  if (finalReviewRequests.data.users.length || finalReviewRequests.data.teams.length ||
+  if (pendingAutomatedReview(finalReviewRequests.data) ||
     hasChangeRequest(finalReviews) ||
     finalPr.data.merged === true || finalPr.data.state !== 'open' ||
     finalPr.data.head?.sha !== pr.head.sha ||

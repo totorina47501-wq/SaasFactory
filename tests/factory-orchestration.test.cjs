@@ -49,6 +49,12 @@ test('an explicit inability to review never becomes a positive attestation',asyn
   const invalid=mergeMocks({reviewBody:"<!-- ccr-overview-v2 -->\n### 🟢 Approval recommended\nNo open issues\nCopilot wasn't able to review any files"});
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(invalid)),false);
 });
+
+test('optional owner notifications do not impose a human review on authorized automation',async()=>{
+  const state=mergeMocks();
+  state.github.rest.pulls.listRequestedReviewers=async()=>({data:{users:[{login:'totorina47501-wq'}],teams:[]}});
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(state)),true);
+});
 const coordinatorTask = () => catalog().tasks.find(task => task.key === 'SFV3-AUTO');
 const issue = (task, extra = {}) => ({
   number: task.issue,
@@ -661,7 +667,7 @@ ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}
         listRequestedReviewers: async () => {
           reviewRequestCalls++;
           const pending = pendingReviewRequest || (lateReviewRequest && reviewRequestCalls > 1);
-          return {data: {users: pending ? [{login: 'reviewer'}] : [], teams: []}};
+          return {data: {users: pending ? [{login: 'copilot-pull-request-reviewer[bot]'}] : [], teams: []}};
         },
         get: async () => ({data: {
           ...pr, state: finalState,
