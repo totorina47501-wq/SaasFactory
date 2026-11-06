@@ -4,7 +4,7 @@ const factoryOrchestration = require('./factory-orchestration.cjs');
 module.exports = async ({github, context, core, fs, orchestration = factoryOrchestration}) => {
   const owner = context.repo.owner, repo = context.repo.repo;
   if (`${owner}/${repo}` !== process.env.EXPECTED_REPO) throw Error('Repository guard rejected');
-  const report = {at:new Date().toISOString(), repo:`${owner}/${repo}`, sha:context.sha, run:context.runId, decision:'none', active:[], eligible:[], blockers:[], prs:[], orchestration:null};
+  const report = {at:new Date().toISOString(), repo:`${owner}/${repo}`, sha:context.sha, run:context.runId, decision:'none', active:[], eligible:[], planned:[], blockers:[], prs:[], orchestration:null, assignment:null};
   const save = () => {
     fs.writeFileSync('agent-dispatch-report.json', JSON.stringify(report,null,2)+'\n');
     core.summary.addHeading('SaaS Factory agent dispatch').addRaw('\n```json\n'+JSON.stringify(report,null,2)+'\n```\n');
@@ -20,6 +20,7 @@ module.exports = async ({github, context, core, fs, orchestration = factoryOrche
       github.paginate(github.rest.pulls.list,{owner,repo,state:'open',per_page:100})
     ]);
     const work = issues.filter(i=>!i.pull_request);
+    report.planned=work.filter(i=>i.labels.some(l=>(typeof l==='string'?l:l.name)==='agent:planned')).map(i=>i.number).sort((a,b)=>a-b);
     const has = (i,label)=>i.labels.some(l=>(typeof l==='string'?l:l.name)===label);
     const matches = (pr,i)=>new RegExp('(?:fixes|closes|resolves)\\s+#'+i.number+'\\b','i').test(pr.body||'') || (pr.body||'').includes('#'+i.number);
     // A Copilot-assigned issue holds capacity even before the corresponding PR opens.
@@ -71,6 +72,7 @@ module.exports = async ({github, context, core, fs, orchestration = factoryOrche
     }
     const specialist=roleLabels[0].slice('agent:role:'.length);
     report.specialist=specialist;
+    report.assignment={issue:issue.number,specialist,confirmed:false};
     if(!await orchestration.revalidateDispatchCandidate({github,context,issueNumber:issue.number,candidate:issue})){
       report.decision='blocked:mission-no-longer-ready';
       report.blockers.push(`Issue #${issue.number} failed the latest authorization or dependency check`);
@@ -84,6 +86,7 @@ module.exports = async ({github, context, core, fs, orchestration = factoryOrche
     });
     const result=await github.rest.issues.get({owner,repo,issue_number:issue.number});
     if(!result.data.assignees.some(a=>/^(Copilot|copilot-swe-agent)(\[bot\])?$/i.test(a.login))) throw Error('Copilot assignment not confirmed by read-back');
+    report.assignment.confirmed=true;
     await github.rest.issues.addLabels({owner,repo,issue_number:issue.number,labels:['agent:in-progress']});
     report.decision=`assigned:#${issue.number}`;
   } catch(e) {

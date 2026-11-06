@@ -30,7 +30,7 @@ La [documentation GitHub](https://docs.github.com/en/copilot/how-tos/use-copilot
 
 ## Isolation et limites
 
-- Le workflow ne répond qu'au planning et à `workflow_dispatch`, sur le dépôt attendu et `refs/heads/main`. Aucune exécution sur événement de PR ou code de PR.
+- Le dispatcher répond au planning, à `workflow_dispatch` et à `workflow_run` **uniquement après une CI `SaaS Factory CI` réussie sur un événement `push` de `main` dans le dépôt attendu**, sur `refs/heads/main`. Les déclencheurs `pull_request` / `pull_request_target` sont exclus ; un `workflow_run` issu d'une PR ou d'un autre dépôt est rejeté au niveau du job. Il reste soumis au contrôle du SHA courant de `main` avant toute écriture.
 - Le checkout charge le SHA exact de l'événement (`github.sha`) avec le jeton par défaut en lecture et `persist-credentials: false`, sous le garde-fou `refs/heads/main`. Une avance de `main` pendant l'attente ou une réexécution ne change donc pas le code attribué à `context.sha` dans le rapport. Le secret utilisateur est fourni uniquement à l'étape `actions/github-script` du dispatcher.
 - Si le secret manque, arrêt explicite avant le checkout. Aucun repli vers `GITHUB_TOKEN`, aucune élévation de ses permissions et aucune tentative en boucle dans une exécution.
 - Les garde-fous existants restent inchangés : mission approuvée, spécialiste unique, absence de conflits de fichiers, deux missions actives au maximum, une affectation par passage et confirmation via relecture API.
@@ -47,3 +47,7 @@ Si HTTP 403 persiste : vérifier expiration, dépôt sélectionné, droits du je
 ## Révocation et rollback
 
 En cas d'incident, désactiver le workflow de dispatch, annuler toute exécution active et révoquer le jeton dans les paramètres utilisateur. Supprimer ensuite le secret de dépôt. Revenir au code précédent uniquement par PR revue ; l'ancien `GITHUB_TOKEN` ne constitue pas une solution d'affectation Copilot. La suppression du secret fait échouer les futurs dispatchs explicitement, sans lancer de mission.
+
+## Vérification P0 du réveil post-CI
+
+La fusion sur `main` déclenche `SaaS Factory CI` puis, uniquement si elle est verte, un `workflow_run` privilégié filtré par événement d'origine, branche et dépôt. Le cron `*/10` et le lancement manuel restent actifs pour reprendre les passages où aucune fusion n'a lieu. Contrôler `agent-dispatch-report-<run_id>` : `planned`, `orchestration.promoted`, `eligible`, puis `assignment.confirmed=true` et un assignee Copilot relu depuis l'API. Un `success` sans `assignment.confirmed` **ne prouve pas** qu'une mission a été affectée ; les missions en attente de dépendance peuvent légitimement rester planifiées. Les API d'assignation refusées doivent faire échouer le job sans label d'avancement. Avant clôture de l'issue P0, exiger une session Copilot et une PR liées à l'issue suivante.
