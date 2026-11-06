@@ -1,6 +1,6 @@
 # SaaS Factory agent orchestration V2
 
-- Runs at 00 and 30 minutes **UTC**, contingent on the workflow being merged to `main` and Actions being enabled. GitHub schedule may be delayed or skipped.
+- Runs at minutes 00, 10, 20, 30, 40 and 50 **UTC**, contingent on the workflow being merged to `main` and Actions being enabled. GitHub schedule may be delayed or skipped.
 - Always examines open issues and PRs before assignment. Never creates an issue, merges, deploys, provisions cloud resources, or changes secrets.
 - `agent:approved` is the explicit authorization to dispatch, with priority labels `priority:p0`, `priority:p1`, `priority:p2`. Issues must state `Files: path/to/file, directory/` on a single line. Never approve overlapping file scopes.
 - A Copilot-assigned issue, in-progress/review/blocked label, or linked Copilot PR consumes capacity. Maximum two concurrent missions. Issues without scope or PRs without an issue link block unsafe dispatch.
@@ -31,3 +31,5 @@ GitHub cloud agent accepts `agent_assignment.custom_agent` in its API (public pr
 **Issue contract:** `agent:approved` + exactly one `agent:role:...` + `priority:p0/p1/p2` + the line `Files: path1, path2`. Use `docs/templates/implementation-contract.md` for deliverables. Before assigning a new specialist, check open PRs and any conflicting `Files:` paths.
 
 **Operators:** no automated role-creation, secret changes, GitHub Projects Status mutation or auto-merge by specialist profiles. Review PR and CI evidence before merging.
+
+- The ten-minute cadence increases the frequency of checking the queue, **not** the two-mission concurrency limit or Copilot/GitHub quotas. Check Actions run timestamps and agent-dispatch-report.json for evidence of real assignments. GitHub Actions schedules are best-effort.
