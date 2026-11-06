@@ -11,13 +11,16 @@ const pr=(n,state='OPEN',merged=false,closingIssues=[])=>({
   __typename:'PullRequest',number:n,prState:state,merged,repository:repo,labels:labels(),
   closingIssuesReferences:{nodes:closingIssues.map(number=>({number,repository:repo})),pageInfo:{hasNextPage:false}}
 });
-const row=(id,content,s)=>({id,content,fieldValueByName:s?{name:s}:null});
+const row=(id,content,s)=>({id,content,fieldValueByName:s?{name:s,optionId:'O'}:null});
 const states=['Backlog','Approved','Assigned','Coding','In Progress','PR Review','CI Blocked','Done'];
-async function run(items,apply=false,pages=null){
+async function run(items,apply=false,pages=null,mutationResult=null){
   process.env.GITHUB_REPOSITORY='totorina47501-wq/SaasFactory';
   const writes=[],chunks=pages||[items];
   const graphql=async(q,v)=>{
-    if(q.includes('mutation(')){writes.push(v);return {updateProjectV2ItemFieldValue:{projectV2Item:{id:v.item}}};}
+    if(q.includes('mutation(')){
+      writes.push(v);
+      return mutationResult?mutationResult(v):{updateProjectV2ItemFieldValue:{projectV2Item:{id:v.item}}};
+    }
     const n=v.cursor?Number(v.cursor):0;
     return {user:{projectV2:{
       id:'PVT_1',title:'SaaSFactory — Agents',url:'https://github.com/users/totorina47501-wq/projects/2',
@@ -106,6 +109,11 @@ test('incomplete project API responses fail closed',async()=>{
       items:{pageInfo:{hasNextPage:false,endCursor:null}}}}}),
     core:{info(){},summary:s}
   }),/Incomplete project items response/);
+});
+
+test('mutation without a matching acknowledgement is not reported as applied',async()=>{
+  await assert.rejects(()=>run([row('a',issue(6,['agent:approved']),'Backlog')],true,null,()=>({})),
+    /Incomplete mutation acknowledgement/);
 });
 
 test('query aliases PullRequest state to avoid GraphQL field conflict',async()=>{

@@ -89,24 +89,32 @@ async function sync({graphql,core,apply=false}){
       typeof x.items?.pageInfo?.hasNextPage!=='boolean') throw Error('Incomplete project items response');
     for(const row of x.items.nodes){
       if(!row||typeof row.id!=='string'||!Object.hasOwn(row,'fieldValueByName')||
+        (row.fieldValueByName!==null&&(typeof row.fieldValueByName?.name!=='string'||
+          typeof row.fieldValueByName?.optionId!=='string'))||
         (row.content&&!row.content.__typename)) throw Error('Incomplete project item response');
       if(row.content?.__typename==='Issue'){
         const c=row.content;
-        if(!Number.isSafeInteger(c.number)||!['OPEN','CLOSED'].includes(c.state)||
+        if(!Number.isSafeInteger(c.number)||typeof c.repository?.nameWithOwner!=='string'||
+          !['OPEN','CLOSED'].includes(c.state)||
           !Object.hasOwn(c,'stateReason')||!(c.body===null||typeof c.body==='string')||
           !Array.isArray(c.labels?.nodes)||typeof c.labels?.pageInfo?.hasNextPage!=='boolean'||
-          c.labels.pageInfo.hasNextPage||!Array.isArray(c.assignees?.nodes)||
-          typeof c.assignees?.pageInfo?.hasNextPage!=='boolean'||c.assignees.pageInfo.hasNextPage) {
+          c.labels.pageInfo.hasNextPage||c.labels.nodes.some(label=>typeof label?.name!=='string')||
+          !Array.isArray(c.assignees?.nodes)||typeof c.assignees?.pageInfo?.hasNextPage!=='boolean'||
+          c.assignees.pageInfo.hasNextPage||c.assignees.nodes.some(user=>typeof user?.login!=='string')) {
           throw Error('Incomplete issue status response');
         }
       }
       if(row.content?.__typename==='PullRequest'){
         const c=row.content;
-        if(!Number.isSafeInteger(c.number)||!['OPEN','CLOSED'].includes(c.prState)||typeof c.merged!=='boolean'||
+        if(!Number.isSafeInteger(c.number)||typeof c.repository?.nameWithOwner!=='string'||
+          !['OPEN','CLOSED'].includes(c.prState)||typeof c.merged!=='boolean'||
           !Array.isArray(c.labels?.nodes)||typeof c.labels?.pageInfo?.hasNextPage!=='boolean'||
-          c.labels.pageInfo.hasNextPage||!Array.isArray(c.closingIssuesReferences?.nodes)||
+          c.labels.pageInfo.hasNextPage||c.labels.nodes.some(label=>typeof label?.name!=='string')||
+          !Array.isArray(c.closingIssuesReferences?.nodes)||
           typeof c.closingIssuesReferences?.pageInfo?.hasNextPage!=='boolean'||
-          c.closingIssuesReferences.pageInfo.hasNextPage) throw Error('Incomplete pull request dependency response');
+          c.closingIssuesReferences.pageInfo.hasNextPage||
+          c.closingIssuesReferences.nodes.some(ref=>!Number.isSafeInteger(ref?.number)||
+            typeof ref.repository?.nameWithOwner!=='string')) throw Error('Incomplete pull request dependency response');
       }
     }
     project=x;rows.push(...x.items.nodes);
@@ -118,6 +126,10 @@ async function sync({graphql,core,apply=false}){
   }
   const field=project.fields.nodes.find(x=>x?.name==='Status'&&x.options);
   if(!field) throw Error('Missing Status field');
+  if(field.options.some(option=>typeof option?.name!=='string'||typeof option?.id!=='string')||
+    new Set(field.options.map(option=>option.name)).size!==field.options.length) {
+    throw Error('Incomplete Status options');
+  }
   const options=new Map(field.options.map(o=>[o.name,o.id]));
   for(const x of STATES) if(!options.has(x)) throw Error('Missing Status option: '+x);
   const seen=new Set(),dupes=new Set();

@@ -41,7 +41,7 @@ Projeter les états vérifiables des issues et PR de `totorina47501-wq/SaasFacto
 | PV2-01 | Issue approuvée, sans assignee | `Approved` | Test de mapping |
 | PV2-02 | Issue affectée à Copilot | `Assigned` | Test de mapping |
 | PV2-03 | PR draft ouverte | `PR Review`, jamais `Done` | Test de mapping |
-| PV2-04 | PR fusionnée ou issue fermée | `Done` | Test de mapping |
+| PV2-04 | PR fusionnée ou issue fermée comme `COMPLETED` | `Done` | Test de mapping |
 | PV2-05 | Statut déjà conforme | 0 mutation | Test d'idempotence |
 | PV2-06 | Doublon dans les cartes | Arrêt avant écriture | Test fail-closed |
 | PV2-07 | Projet extérieur | Aucune mutation | Test d'isolation |
