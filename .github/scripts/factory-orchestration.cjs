@@ -292,6 +292,18 @@ function safeApiError() {
   return new Error('Orchestration API failed closed; no additional action was taken');
 }
 
+async function mergedMissionProof(github, owner, repo, number, issue) {
+  const result = await github.graphql(
+    'query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){number merged closingIssuesReferences(first:100){nodes{number repository{nameWithOwner}}pageInfo{hasNextPage}}}}}',
+    {owner,repo,number}
+  );
+  const pr = result?.repository?.pullRequest, refs = pr?.closingIssuesReferences;
+  assert(pr?.number === number && typeof pr.merged === 'boolean' && Array.isArray(refs?.nodes) &&
+    refs.pageInfo?.hasNextPage === false, 'Merged mission proof is incomplete');
+  return pr.merged && refs.nodes.length === 1 && refs.nodes[0]?.number === issue &&
+    refs.nodes[0]?.repository?.nameWithOwner === REPOSITORY;
+}
+
 async function dependenciesReady({
   github, owner, repo, task, tasks, issuesByNumber, allPrs, cache = new Map(), stack = new Set()
 }) {
@@ -347,7 +359,8 @@ async function dependenciesReady({
         const mergedPr = cache.get(key);
         const linkedIssues = linkedIssueNumbers(mergedPr.body || '');
         if (mergedPr.merged === true && linkedIssues.length === 1 &&
-          linkedIssues[0] === dependency.number) {
+          linkedIssues[0] === dependency.number &&
+        await mergedMissionProof(github,owner,repo,pr.number,dependency.number)) {
           mergedProof = true;
           break;
         }

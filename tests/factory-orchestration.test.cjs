@@ -11,6 +11,15 @@ const catalog = () => JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
 const mainSha = 'b'.repeat(40);
 const headSha = 'a'.repeat(40);
 
+test('dependency delivery needs canonical closure evidence beyond merged PR prose',async()=>{
+  const data=catalog(), task=data.tasks.find(t=>t.key==='SFV3-ARCH');
+  const parent=coordinatorTask(), completed=issue(parent,{state:'closed',state_reason:'completed'});
+  const proof={number:90,body:'Closes #17'};
+  const {github}=orchestrationGithub({issues:[completed],allPrs:[proof],dependencyMerged:{90:true}});
+  github.graphql=async()=>({repository:{pullRequest:{number:90,merged:true,closingIssuesReferences:{nodes:[],pageInfo:{hasNextPage:false}}}}});
+  assert.equal(await orchestration.dependenciesReady({github,owner:'totorina47501-wq',repo:'SaasFactory',task,tasks:orchestration.validateCatalog(data),issuesByNumber:new Map([[17,completed]]),allPrs:[proof],cache:new Map()}),false);
+});
+
 test('GitHub closing references are authoritative for hidden or additional missions',async()=>{
   for(const [prBody,actualClosingIssues] of [['Fixes #17\n`Closes #18',[17,18]],['    Fixes #17',[]]]){
     const state=mergeMocks({prBody,actualClosingIssues});
@@ -156,8 +165,8 @@ function orchestrationGithub({
         }})
       }
     },
-    graphql: async () => ({
-      repository: {pullRequest: {headRefOid: headSha, closingIssuesReferences: {nodes:[{number:17,repository:{nameWithOwner:orchestration.REPOSITORY}}],pageInfo:{hasNextPage:false}}, reviewThreads: {
+    graphql: async (_query, variables) => ({
+      repository: {pullRequest: {number:variables.number, merged:true, headRefOid: headSha, closingIssuesReferences: {nodes:[{number:Number((allPrs.find(pr=>pr.number===variables.number)?.body||'Closes #17').match(/#(\d+)/)?.[1]),repository:{nameWithOwner:orchestration.REPOSITORY}}],pageInfo:{hasNextPage:false}}, reviewThreads: {
         nodes: reviewThreads, pageInfo: {hasNextPage: false, endCursor: null}
       }}}
     })
@@ -393,6 +402,7 @@ test('dispatch candidate dependencies are refreshed before assignment', async ()
     [task.issue, candidate], [parent.issue, completed], [secondParent.issue, completedSecond]
   ]);
   const github = {
+    graphql:async(_query,variables)=>({repository:{pullRequest:{number:variables.number,merged:pullData.get(variables.number)?.merged===true,closingIssuesReferences:{nodes:[{number:Number(pullData.get(variables.number)?.body?.match(/#(\d+)/)?.[1]),repository:{nameWithOwner:orchestration.REPOSITORY}}],pageInfo:{hasNextPage:false}}}}}),
     paginate: async method => {
       if (method === github.rest.issues.listForRepo) return [...issueData.values()];
       if (method === github.rest.pulls.list) return [proof, secondProof];
