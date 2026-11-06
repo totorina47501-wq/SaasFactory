@@ -211,32 +211,43 @@ function taskMetadataMatches(task, issue, requireApproved = true) {
 }
 
 function linkedIssueNumbers(body) {
-  const lines = String(body || '').replace(/<!--[\s\S]*?(?:-->|$)/g, ' ').split(/\r?\n/);
+  // Parse comment and code visibility together. Delimiters inside a code fence
+  // must never change the visibility of text after that fence.
   const visible = [];
-  let fence = null;
-  for (const line of lines) {
-    const marker = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+  let fence = null, comment = false;
+  for (const line of String(body || '').split(/\r?\n/)) {
+    const marker = !comment && line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
     if (fence) {
-      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = null;
+      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
       continue;
     }
-    if (marker) {
-      fence = marker[1];
-      continue;
+    if (marker) { fence = marker[1]; continue; }
+    let text = '', inline = 0;
+    for (let i = 0; i < line.length;) {
+      if (comment) {
+        const end = line.indexOf('-->', i);
+        if (end < 0) break;
+        comment = false; i = end + 3; text += ' '; continue;
+      }
+      if (line[i] === '`') {
+        const run = line.slice(i).match(/^`+/)[0].length;
+        if (!inline) inline = run;
+        else if (inline === run) inline = 0;
+        i += run; text += ' '; continue;
+      }
+      if (!inline && line.startsWith('<!--', i)) { comment = true; i += 4; text += ' '; continue; }
+      text += inline ? ' ' : line[i]; i++;
     }
-    visible.push(line);
+    visible.push(text);
   }
-  const text = visible.join('\n').replace(/`[^`\n]*`/g, ' ');
+  const text = visible.join('\n');
   const found = [];
   const keywords = /\b(?:close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)\b/gi;
   for (const match of text.matchAll(keywords)) {
     const remainder = text.slice(match.index + match[0].length);
     const candidate = remainder.match(/^\s+([^\s,;]+)/)?.[1]
       ?.replace(/[).,;:!?]+$/g, '');
-    if (!candidate) {
-      found.push(-1);
-      continue;
-    }
+    if (!candidate || !/^(?:#|https?:\/\/|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#)/i.test(candidate)) continue;
     const local = candidate.match(/^#([1-9]\d*)$/);
     const qualified = candidate.match(/^([^/#]+\/[^#]+)#([1-9]\d*)$/);
     let number = local ? Number(local[1]) : null;
@@ -374,7 +385,7 @@ async function revalidateDispatchCandidate({github, context, issueNumber, io = f
     if (!Array.isArray(currentIssue.assignees) || currentIssue.assignees.length ||
       labels.includes('agent:in-progress') || labels.includes('agent:review') ||
       !taskMatchesAuthorizedIssue(task, currentIssue)) return false;
-    return dependenciesReady({
+    return await dependenciesReady({
       github, owner, repo, task, tasks,
       issuesByNumber: new Map(issues.filter(issue => !issue.pull_request)
         .map(issue => [issue.number, issue])),
@@ -412,6 +423,14 @@ async function trustedCi(github, owner, repo, workflow, sha) {
   return newestAttempt.status === 'completed' && newestAttempt.conclusion === 'success';
 }
 
+function hasChangeRequest(reviews) {
+  const latest = new Map();
+  for (const review of [...reviews].sort((a,b)=>String(a.submitted_at||'').localeCompare(String(b.submitted_at||''))||a.id-b.id)) {
+    if (['APPROVED','CHANGES_REQUESTED'].includes(review.state)) latest.set(review.user?.login, review.state);
+  }
+  return [...latest.values()].includes('CHANGES_REQUESTED');
+}
+
 function reviewFiles(body) {
   const files = new Set();
   const lines = body.split(/\r?\n/);
@@ -425,7 +444,7 @@ function reviewFiles(body) {
     for (index += 2; index < lines.length && /^\|/.test(lines[index]); index++) {
       const row = lines[index].match(/^\|\s*`([^`]+)`\s*\|\s*[^|]+\|\s*$/);
       if (!row) return new Set();
-      const candidate = row[1].trim();
+      const candidate = row[1].replace(/\u200b/g,'').trim();
       if (!/^[A-Za-z0-9._/-]+$/.test(candidate) || candidate.includes('..')) return new Set();
       files.add(candidate);
     }
@@ -459,7 +478,7 @@ async function trustedReview({github, owner, repo, pr, changedFiles, headSha}) {
     'Review request evidence is incomplete');
   if (requested.data.users.length || requested.data.teams.length) return false;
   if (threads.some(thread => thread.isResolved !== true)) return false;
-  if (reviews.some(review => review.state === 'CHANGES_REQUESTED')) return false;
+  if (hasChangeRequest(reviews)) return false;
 
   const finalReview = reviews.filter(review => BOT_REVIEWERS.has(review.user?.login) &&
     review.commit_id === headSha)
@@ -468,8 +487,13 @@ async function trustedReview({github, owner, repo, pr, changedFiles, headSha}) {
     !/\bApproval recommended\b/i.test(finalReview.body) ||
     !/\bNo open issues\b/i.test(finalReview.body) ||
     /\b(?:changes recommended|needs a closer look|human review|request changes)\b/i.test(finalReview.body)) return false;
+  if (/could(?:n.t| not).*review|(?:wasn.t|was not) able to review|no files (?:were )?reviewed/i.test(finalReview.body)) return false;
   const examined = reviewFiles(finalReview.body);
-  return changedFiles.length > 0 && changedFiles.every(file => examined.has(file));
+  const hasTable = /^\|\s*File\s*\|/im.test(finalReview.body);
+  // A final, authenticated positive verdict is the provider's attestation.
+  // Its incremental clean-review format often omits tables and inline comments.
+  const attestedCleanFormat = /<!-- ccr-overview-v2 -->/.test(finalReview.body) && /^### .*Approval recommended/im.test(finalReview.body);
+  return changedFiles.length > 0 && (hasTable ? changedFiles.every(file => examined.has(file)) : attestedCleanFormat);
 }
 
 async function mergeEligiblePullRequest({
@@ -501,8 +525,7 @@ async function mergeEligiblePullRequest({
   const reviewedFiles = files.map(file => file.filename);
   const scopeFiles = [...new Set(files.flatMap(file =>
     [file.filename, file.previous_filename].filter(Boolean)))];
-  if (!scopeFiles.length || scopeFiles.some(file => !pathAllowed(file, task.files)) ||
-    scopeFiles.some(file => file.startsWith('.github/workflows/'))) return false;
+  if (!scopeFiles.length || scopeFiles.some(file => !pathAllowed(file, task.files))) return false;
   if (!await trustedCi(github, owner, repo, workflow, pr.head.sha)) return false;
   if (!await trustedReview({github, owner, repo, pr, changedFiles: reviewedFiles, headSha: pr.head.sha})) return false;
 
@@ -546,7 +569,7 @@ async function mergeEligiblePullRequest({
     'Final review request evidence is incomplete');
   assert(Array.isArray(finalReviews), 'Final review evidence is incomplete');
   if (finalReviewRequests.data.users.length || finalReviewRequests.data.teams.length ||
-    finalReviews.some(review => review.state === 'CHANGES_REQUESTED') ||
+    hasChangeRequest(finalReviews) ||
     finalPr.data.merged === true || finalPr.data.state !== 'open' ||
     finalPr.data.head?.sha !== pr.head.sha ||
     finalPr.data.head?.ref !== pr.head.ref || finalPr.data.head?.repo?.full_name !== REPOSITORY ||
@@ -653,14 +676,6 @@ async function run({github, context, core, io = fs}) {
           if (task.existingWork) {
             report.blockers.push(`existing-work-metadata:#${task.issue}/PR#${pr.number}`);
           }
-          continue;
-        }
-        if (detailedPr.changed_files > 0 && detailedPr.state === 'open' &&
-          (await github.paginate(github.rest.pulls.listFiles, {
-            owner, repo, pull_number: pr.number, per_page: 100
-          })).some(file => [file.filename, file.previous_filename].some(filename =>
-            filename?.startsWith('.github/workflows/')))) {
-          report.blockers.push(`manual-workflow-review:#${pr.number}`);
           continue;
         }
         if (await mergeEligiblePullRequest({

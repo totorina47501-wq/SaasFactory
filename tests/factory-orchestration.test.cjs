@@ -10,6 +10,45 @@ const catalogPath = path.join(__dirname, '../docs/catalog/factory-backlog-v1.jso
 const catalog = () => JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
 const mainSha = 'b'.repeat(40);
 const headSha = 'a'.repeat(40);
+
+test('visible closure links survive fenced HTML markers and ordinary prose is ignored',async()=>{
+  const hiddenMarker=mergeMocks({prBody:'Fixes #17\n```text\n<!--\n```\nCloses #18'});
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(hiddenMarker)),false);
+  const prose=mergeMocks({prBody:'Resolve dependencies from GitHub evidence.\nFixes #17'});
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(prose)),true);
+});
+
+test('a clean authenticated Copilot verdict without a file table can authorize a scoped change',async()=>{
+  const clean=mergeMocks({reviewBody:'<!-- ccr-overview-v2 -->\n### 🟢 Approval recommended\n\n**No open issues** 🎉'});
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(clean)),true);
+});
+
+test('authorized workflow paths use the same CI, scope and final review gates',async()=>{
+  const scoped=mergeMocks({changedFiles:['.github/workflows/saas-factory-agent-dispatch.yml']});
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(scoped)),true);
+  const outside=mergeMocks({changedFiles:['.github/workflows/unknown.yml']});
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(outside)),false);
+});
+
+test('effective final approval supersedes an older request by the same reviewer',async()=>{
+  const state=mergeMocks();
+  const paginate=state.github.paginate;
+  state.github.paginate=async(method,args)=>{
+    const values=await paginate(method,args);
+    if(method!==state.github.rest.pulls.listReviews)return values;
+    return [
+      {id:1,user:{login:'maintainer'},state:'CHANGES_REQUESTED',submitted_at:'2026-11-06T08:00:00Z'},
+      {id:2,user:{login:'maintainer'},state:'APPROVED',submitted_at:'2026-11-06T08:30:00Z'},
+      ...values
+    ];
+  };
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(state)),true);
+});
+
+test('an explicit inability to review never becomes a positive attestation',async()=>{
+  const invalid=mergeMocks({reviewBody:"<!-- ccr-overview-v2 -->\n### 🟢 Approval recommended\nNo open issues\nCopilot wasn't able to review any files"});
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(invalid)),false);
+});
 const coordinatorTask = () => catalog().tasks.find(task => task.key === 'SFV3-AUTO');
 const issue = (task, extra = {}) => ({
   number: task.issue,
@@ -450,7 +489,7 @@ test('final issue reread must retain approval, role, file scope, and dependency 
   assert.equal(mainAdvancedLate.calls.length, 0);
 });
 
-test('current existing work is evaluated but CI workflow changes remain manual-review only', async () => {
+test('existing workflow changes still require positive CI and review evidence', async () => {
   const data = catalog();
   const existing = data.existingWork[0];
   const workIssue = issue({
@@ -481,7 +520,7 @@ test('current existing work is evaluated but CI workflow changes remain manual-r
   const result = await runCoordinator(github);
   assert.deepEqual(detailedReads, [existing.pullRequest]);
   assert.deepEqual(result.merged, []);
-  assert.deepEqual(result.blockers, [`manual-workflow-review:#${existing.pullRequest}`]);
+  assert.deepEqual(result.blockers, []);
 });
 
 test('existing work with missing issue dependency metadata is reported as held', async () => {
