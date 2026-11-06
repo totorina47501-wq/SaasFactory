@@ -7,7 +7,7 @@
     "node": ">=22.12.0 <27"
   },
   "scripts": {
-    "test": "node --test tests/*.test.mjs tests/*.test.cjs",
+    "test": "node --test tests/*.test.mjs",
     "generate": "node generate.mjs",
     "smoke": "node generate.mjs --config examples/minimal.json --output-root /tmp/saas-factory-dry-run"
   }

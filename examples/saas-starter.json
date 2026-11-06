@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "productName": "SaaS Starter",
+  "projectSlug": "saas-starter",
+  "domain": "starter.example",
+  "modules": [
+    "ai-disabled",
+    "api",
+    "auth",
+    "billing-test",
+    "media"
+  ],
+  "languages": [
+    "fr-FR",
+    "en"
+  ],
+  "defaultLanguage": "fr-FR",
+  "deploymentTarget": "cloudflare-opennext"
+}
