@@ -35,7 +35,7 @@ test('a new full-featured SaaS starter can be previewed and generated safely', (
     assert.ok(existsSync(path.join(dest,'public','media-fixture.svg')));
     assert.ok(!readdirSync(dest).includes('.git'),'never copy a git history');
     assert.match(execFileSync(process.execPath,['--test','tests/smoke.test.mjs'],{
-      cwd:dest,encoding:'utf8'
+      cwd:dest,encoding:'utf8',env:{...process.env,NODE_TEST_CONTEXT:undefined}
     }),/pass/);
     assert.throws(()=>invoke(true),'existing destination must never be overwritten');
   } finally {
