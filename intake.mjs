@@ -26,7 +26,7 @@ function string(v,name,max=500){
  const credentialMarkers=[
   /gh[pousr]_[A-Za-z0-9_]{16,}/,
   /github_pat_[A-Za-z0-9_]{20,}/,
-  /sk-(?:proj-|test-|live-)?[A-Za-z0-9_-]{16,}/,
+  /(?<![A-Za-z0-9_])sk-(?:proj-|test-|live-)?[A-Za-z0-9_-]{16,}/,
   /(?:AKIA|ASIA)[A-Z0-9]{16}/,
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
   /(?:bearer\s+)[A-Za-z0-9._~+/-]{20,}/i,
@@ -100,3 +100,4 @@ if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.m
  try{main(process.argv.slice(2))}catch(e){process.stderr.write('saas-intake: '+e.message+'\n');process.exitCode=1}
 }
 export {verifyIntake,compileIntake};
+

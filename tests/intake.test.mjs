@@ -8,6 +8,16 @@ const example=fileURLToPath(new URL('../examples/intake-sample.json',import.meta
 const cli=fileURLToPath(new URL('../intake.mjs',import.meta.url));
 const base=JSON.parse(readFileSync(example,'utf8'));
 const text=change=>JSON.stringify({...base,...change});
+test('accepts ordinary words containing credential prefixes and still rejects actual keys',()=>{
+ const benign={...base.product,name:'Task management platform',slug:'task-management-platform'};
+ assert.equal(compileIntake(text({product:benign})).projectSlug,benign.slug);
+ for(const prefix of ['sk-','sk-proj-','sk-test-','sk-live-']){
+  const token=prefix+'a'.repeat(24);
+  for(const separator of ['', 'Key: ', '(', '\"']){
+   assert.throws(()=>compileIntake(text({assumptions:[separator+token]})),/credential-like/);
+  }
+ }
+});
 test('generates a deterministic generator configuration and draft-only missions',()=>{
  const a=compileIntake(text()),b=compileIntake(text());
  assert.deepEqual(a,b);
@@ -83,3 +93,4 @@ test('reject duplicate JSON keys and malformed input',()=>{
  assert.notEqual(result.status,0);
  assert.equal(result.stdout,'');
 });
+
