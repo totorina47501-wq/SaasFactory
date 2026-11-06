@@ -1,0 +1,42 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "dependencyDashboard": true,
+  "prConcurrentLimit": 2,
+  "prHourlyLimit": 1,
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "timezone": "Europe/Paris",
+  "labels": [
+    "dependencies",
+    "agent:review"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "GitHub Actions updates"
+    },
+    {
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "safe npm minor and patch updates"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true
+  },
+  "automerge": false,
+  "platformAutomerge": false,
+  "rebaseWhen": "behind-base-branch",
+  "dependencyDashboardApproval": false
+}

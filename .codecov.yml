@@ -1,0 +1,17 @@
+# Only applies after the repository owner explicitly enables Codecov.
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 2%
+    patch:
+      default:
+        target: 70%
+comment:
+  layout: 'reach,diff,flags,files'
+  behavior: default
+  require_changes: true
+ignore:
+  - 'examples/**'
+  - 'docs/**'

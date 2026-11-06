@@ -66,9 +66,10 @@ module.exports = async ({github, context, core, fs}) => {
       return result;
     }, null),
     capture('workflowRuns', async () => {
-      const result = await github.rest.actions.listWorkflowRunsForRepo({owner, repo, branch: 'main', per_page: 10});
+      const result = await github.rest.actions.listWorkflowRunsForRepo({owner, repo, branch: 'main', per_page: 50});
       if (!Array.isArray(result?.data?.workflow_runs)) throw Error('workflow runs missing from API response');
-      return result.data.workflow_runs;
+      const sampled=result.data.workflow_runs.filter(run=>/ci|test|quality/i.test(run.name||'') || run.conclusion==='failure').slice(0,10);
+      return sampled.length?sampled:result.data.workflow_runs.slice(0,10);
     }, null),
     capture('copilotIssues', async () => {
       const result = await github.paginate(github.rest.issues.listForRepo, {owner, repo, state: 'open', per_page: 100});
@@ -96,16 +97,51 @@ module.exports = async ({github, context, core, fs}) => {
     };
   }
 
+  const linkedCopilotIssues = new Set();
+  if (issues && openPulls) {
+    const actualIssues=issues.filter(issue=>!issue.pull_request);
+    for(const pull of openPulls) {
+      if(pull.user?.login!=='Copilot' && !pull.head?.ref?.startsWith('copilot/')) continue;
+      for(const issue of actualIssues) {
+        if(new RegExp('(?:fixes|closes|resolves)\\s+#'+issue.number+'\\b','i').test(pull.body||'') ||
+          (pull.body||'').includes('#'+issue.number)) linkedCopilotIssues.add(issue.number);
+      }
+    }
+  }
   if (issues) {
-    report.activeCopilotIssues = issues.filter(isCopilotActive).map(issueFields);
+    report.activeCopilotIssues = issues
+      .filter(issue=>!issue.pull_request && (isCopilotActive(issue) || linkedCopilotIssues.has(issue.number)))
+      .map(issueFields);
     report.blockers.push(...report.activeCopilotIssues
       .filter(issue => issue.labels.includes('agent:blocked'))
       .map(issue => ({type: 'blocked-issue', number: issue.number, title: issue.title, updatedAt: issue.updatedAt})));
   }
 
-  if (runs) {
+  // Collect CI for open PR head commits separately: frequent 10-minute schedules must not hide failing PR checks.
+  const prRuns=[];
+  if(openPulls){
+    let failed=0;
+    const prHeads=openPulls.filter(p=>p.head?.sha && p.head?.ref).slice(0,20);
+    for(const pull of prHeads){
+      try {
+        const result=await github.rest.actions.listWorkflowRunsForRepo({
+          owner,repo,branch:pull.head.ref,event:'pull_request',per_page:30
+        });
+        if(!Array.isArray(result?.data?.workflow_runs)) throw Error('PR workflow runs missing from API response');
+        prRuns.push(...result.data.workflow_runs
+          .filter(run=>run.head_sha===pull.head.sha && run.event==='pull_request')
+          .slice(0,3));
+      } catch(error) {
+        failed++;
+        report.errors.push({source:'pullRequestWorkflowRuns',number:pull.number,message:String(error?.message||error).slice(0,300)});
+      }
+    }
+    report.sources.pullRequestWorkflowRuns=failed===0 && openPulls.length<=20 ? 'available' : 'partial';
+  } else report.sources.pullRequestWorkflowRuns='unavailable';
+  const allRuns=[...new Map([...(runs||[]),...prRuns].map(run=>[run.id,run])).values()];
+  if (runs || prRuns.length) {
     let jobFailures = 0;
-    const jobsByRun = await Promise.all(runs.map(async run => {
+    const jobsByRun = await Promise.all(allRuns.map(async run => {
       try {
         const result = await github.rest.actions.listJobsForWorkflowRun({owner, repo, run_id: run.id, per_page: 100});
         if (!Array.isArray(result?.data?.jobs)) throw Error('workflow jobs missing from API response');
@@ -116,8 +152,8 @@ module.exports = async ({github, context, core, fs}) => {
         return null;
       }
     }));
-    report.sources.workflowJobs = jobFailures === 0 ? 'available' : jobFailures === runs.length ? 'unavailable' : 'partial';
-    report.workflowRuns = runs.map((run, index) => ({
+    report.sources.workflowJobs = jobFailures === 0 ? 'available' : jobFailures === allRuns.length ? 'unavailable' : 'partial';
+    report.workflowRuns = allRuns.map((run, index) => ({
       id: run.id,
       name: run.name,
       workflowId: run.workflow_id,

@@ -25,6 +25,8 @@ jobs:
         run: node --test tests/agent-report.test.cjs
       - name: Validate specialist agent security contracts offline
         run: node --test tests/specialist-agents.test.cjs
+      - name: Validate optional quality integrations offline
+        run: node --test tests/factory-quality-config.test.cjs
       - name: Test Projects V2 status synchronization offline
         run: node --test tests/projects-v2-sync.test.cjs
       - name: Verify complete SaaS starter creation offline
