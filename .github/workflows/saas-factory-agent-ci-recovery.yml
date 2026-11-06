@@ -1,0 +1,37 @@
+name: SaaS Factory agent CI recovery
+# Disabled by default: the @copilot comment trigger is unverified; enable only after manual confirmation.
+on:
+  workflow_run:
+    workflows: ["SaaS Factory CI"]
+    types: [completed]
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: read
+concurrency:
+  group: saas-factory-ci-recovery-${{ github.event.workflow_run.pull_requests[0].number || 'unassociated' }}
+  cancel-in-progress: false
+jobs:
+  recover:
+    if: >-
+      github.repository == 'totorina47501-wq/SaasFactory' &&
+      github.event.workflow_run.name == 'SaaS Factory CI' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      vars.SAAS_FACTORY_CI_RECOVERY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted default-branch recovery code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Process verified Copilot CI failure
+        uses: actions/github-script@v7
+        env:
+          EXPECTED_REPO: totorina47501-wq/SaasFactory
+        with:
+          script: |
+            const recover = require('./.github/scripts/agent-ci-recovery.cjs');
+            await recover({github, context, core});
