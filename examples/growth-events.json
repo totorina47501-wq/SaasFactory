@@ -1,0 +1,39 @@
+[
+  {
+    "id": "visit-1",
+    "tenantId": "workshop-scheduler",
+    "subjectKey": "synthetic-1",
+    "kind": "visit",
+    "source": "seo",
+    "occurredAt": "2026-11-07T08:00:00.000Z",
+    "consent": true
+  },
+  {
+    "id": "signup-1",
+    "tenantId": "workshop-scheduler",
+    "subjectKey": "synthetic-1",
+    "kind": "signup",
+    "source": "seo",
+    "occurredAt": "2026-11-07T09:00:00.000Z",
+    "consent": true
+  },
+  {
+    "id": "trial-1",
+    "tenantId": "workshop-scheduler",
+    "subjectKey": "synthetic-1",
+    "kind": "trial",
+    "source": "seo",
+    "occurredAt": "2026-11-07T10:00:00.000Z",
+    "consent": true
+  },
+  {
+    "id": "paid-1",
+    "tenantId": "workshop-scheduler",
+    "subjectKey": "synthetic-1",
+    "kind": "paid-simulated",
+    "source": "seo",
+    "occurredAt": "2026-11-07T11:00:00.000Z",
+    "consent": true,
+    "amountCents": 1999
+  }
+]

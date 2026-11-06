@@ -1367,6 +1367,186 @@
         "Afficher les états réels planned/waiting/assigned/review/CI blocked/done avec dépendances, ne pas assimiler closed/not_planned à livraison. Ne pas modifier secret, statut ou options du Project sans besoin et autorisation établis.",
         "Tests fermeture non livrée, dépendances, API partielles et idempotence ; conserver la cadence six contrôles/heure et ne pas affecter Copilot depuis le synchroniseur."
       ]
+    },
+    {
+      "key": "SFV3-GTMMARKET",
+      "issue": 64,
+      "title": "Market Validation Engine — qualification des idées SaaS",
+      "role": "product-architect",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "growth/market/",
+        "tests/growth-market.test.mjs",
+        "docs/growth/market.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 18
+        },
+        {
+          "kind": "issue",
+          "number": 21
+        },
+        {
+          "kind": "issue",
+          "number": 41
+        }
+      ],
+      "acceptance": [
+        "Contrat de validation de marché fondé sur les sources avec incertitudes et hypothèses",
+        "Tests offline du schéma, non-invention des preuves, API et fixture app générée",
+        "Intégration Intake et documentation des limites sans fournisseurs activés"
+      ]
+    },
+    {
+      "key": "SFV3-GTMGROWTH",
+      "issue": 65,
+      "title": "Growth Engine — playbooks SEO et acquisition",
+      "role": "product-architect",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "growth/acquisition/",
+        "tests/growth-acquisition.test.mjs",
+        "docs/growth/acquisition.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 21
+        },
+        {
+          "kind": "issue",
+          "number": 44
+        },
+        {
+          "kind": "issue",
+          "number": 41
+        }
+      ],
+      "acceptance": [
+        "Playbooks de lancement réutilisables depuis manifeste et pages SEO FR/EN",
+        "Tous les contenus et campagnes restent des brouillons sans diffusion, avec contrôle des affirmations",
+        "Tests offline de consentement, idempotence, exports et intégration app générée"
+      ]
+    },
+    {
+      "key": "SFV3-GTMATTRIBUTION",
+      "issue": 66,
+      "title": "Revenue Attribution Engine — visites et revenus simulés",
+      "role": "platform-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "growth/attribution/",
+        "tests/growth-attribution.test.mjs",
+        "docs/growth/attribution.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 29
+        },
+        {
+          "kind": "issue",
+          "number": 41
+        },
+        {
+          "kind": "issue",
+          "number": 32
+        }
+      ],
+      "acceptance": [
+        "Attribution locale bornée et explicable, mesures first-touch et last-touch",
+        "Isolation tenant, suppression RGPD, déduplication et refus du tracking sans consentement",
+        "Tests de calcul exact, événements tardifs, simulations et exports app générée"
+      ]
+    },
+    {
+      "key": "SFV3-SALESCRM",
+      "issue": 70,
+      "title": "Sales CRM Engine — pipeline local et journal des interactions",
+      "role": "generator-engineer",
+      "priority": "p1",
+      "automationAuthorized": true,
+      "files": [
+        "growth/crm/",
+        "tests/growth-crm.test.mjs",
+        "docs/growth/crm.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 24
+        },
+        {
+          "kind": "issue",
+          "number": 41
+        }
+      ],
+      "acceptance": [
+        "CRM tenant sécurisé avec persistance locale et suppression complète",
+        "Pipeline, historique, base légale, opposition et connexions facultatives sans envoi réel",
+        "Tests offline sécurité/permissions et construction dans une app générée"
+      ]
+    },
+    {
+      "key": "SFV3-AUTOGROWTH",
+      "issue": 71,
+      "title": "Autonomous Growth Pilot — recommandations et budgets maîtrisés",
+      "role": "product-architect",
+      "priority": "p2",
+      "automationAuthorized": true,
+      "files": [
+        "growth/autonomous/",
+        "tests/growth-autonomous.test.mjs",
+        "docs/growth/autonomous.md"
+      ],
+      "dependsOn": [
+        {
+          "kind": "issue",
+          "number": 17
+        },
+        {
+          "kind": "issue",
+          "number": 64
+        },
+        {
+          "kind": "issue",
+          "number": 65
+        },
+        {
+          "kind": "issue",
+          "number": 66
+        },
+        {
+          "kind": "issue",
+          "number": 70
+        }
+      ],
+      "acceptance": [
+        "Pilote de recommandations fondé sur des agrégats validés et état draft-only",
+        "Compteurs et budgets IA/publicitaires explicitement bornés à zéro sans activation",
+        "Tests d'anti-doublons, d'opposition, de cycle synthétique et rollback reproductible"
+      ]
     }
   ]
 }
