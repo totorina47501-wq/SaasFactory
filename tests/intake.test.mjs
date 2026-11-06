@@ -64,6 +64,19 @@ test('capability catalog has unique safe ids and supported status vocabulary',()
   assert.ok(['generator-engineer','qa-engineer','security-engineer','platform-engineer','product-architect','ux-accessibility','documentation-release'].includes(c.owner));
  }
 });
+test('rejects token-shaped secrets in all free-form intake strings without echoing them',()=>{
+ const token='ghp_'+ 'a'.repeat(36);
+ const variants=[
+  {mvp:[{...base.mvp[0],description:'Description '+token}]},
+  {assumptions:['Do not publish '+token]},
+  {product:{...base.product,summary:'Data '+token}},
+  {market:{...base.market,problem:'Bearer '+ 'a'.repeat(30)}},
+  {mvp:[{...base.mvp[0],description:'api_key='+ 'b'.repeat(24)}]}
+ ];
+ for(const variant of variants){
+  assert.throws(()=>compileIntake(text(variant)),error=>error.message.includes('credential-like')&&!error.message.includes(token));
+ }
+});
 test('reject duplicate JSON keys and malformed input',()=>{
  assert.throws(()=>compileIntake(readFileSync(example,'utf8').replace('"intakeVersion": 1','"intakeVersion": 1, "intakeVersion": 1')),/Duplicate JSON key/);
  const result=spawnSync(process.execPath,[cli,'--config',example],{encoding:'utf8'});

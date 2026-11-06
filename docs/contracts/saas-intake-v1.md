@@ -4,7 +4,7 @@
 
 ## Entry point
 
-1. Use the versioned [ChatGPT intake master prompt](../docs/prompts/chatgpt-saas-intake-v1.md) to prepare a product brief.
+1. Use the versioned [ChatGPT intake master prompt](../prompts/chatgpt-saas-intake-v1.md) to prepare a product brief.
 2. Write the resulting JSON as an intake manifest; [sample](../../examples/intake-sample.json).
 3. `node intake.mjs --input examples/intake-sample.json > /tmp/intake-plan.json`
 4. Inspect `generatorConfig`; save **only** this object to a separate JSON configuration file, then use the existing `generate.mjs` dry-run and explicitly approved `--write` procedure.
@@ -33,7 +33,7 @@ Allowed priorities: `p0`, `p1`, `p2`. Owners: the seven existing `.github/agents
 
 - Inspect live `main`, issues, PRs, contracts and existing templates before planning any change; do not duplicate functionality.
 - Intake version is distinct from generator `schemaVersion`; incompatible changes need a versioned contract and migration.
-- Duplicate JSON keys, unknown keys, invalid role/priority, oversized manifests and invalid generator configuration fail closed.
+- Duplicate JSON keys, unknown keys, invalid role/priority, oversized manifests, recognizable credential-like values in every free-form string and invalid generator configuration fail closed. The scan is best-effort and is not a replacement for secret scanning at pull request and deployment gates.
 - No arbitrary commands, deployment, secrets, accounts, network, GitHub mutations, generator writes, production integrations or external paid providers.
 - Each real mission subsequently requires a project-specific issue/contract, explicit file ownership, approval, review and CI. Factory Issues/Projects remain for **generic Factory improvements**. New SaaS product missions belong in the independent product repository once provisioned.
 - Rollback: revert the new `intake.mjs` adapter and examples; the generator is unmodified.

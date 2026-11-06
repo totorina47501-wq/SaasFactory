@@ -22,6 +22,17 @@ function keys(obj,expected,context){
 }
 function string(v,name,max=500){
  if(typeof v!=='string'||!v.trim()||v.length>max||/[\x00-\x1f\x7f]/u.test(v))throw Error(name+' must be a nonempty printable string of at most '+max+' characters');
+ // Fail closed for common credential formats; do not echo suspect input in errors.
+ const credentialMarkers=[
+  /gh[pousr]_[A-Za-z0-9_]{16,}/,
+  /github_pat_[A-Za-z0-9_]{20,}/,
+  /sk-(?:proj-|test-|live-)?[A-Za-z0-9_-]{16,}/,
+  /(?:AKIA|ASIA)[A-Z0-9]{16}/,
+  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
+  /(?:bearer\\s+)[A-Za-z0-9._~+/-]{20,}/i,
+  /(?:password|api[_ -]?key|access[_ -]?token|secret[_ -]?key)\\s*[:=]\\s*['"]?[A-Za-z0-9_+/=-]{16,}/i
+ ];
+ if(credentialMarkers.some(pattern=>pattern.test(v)))throw Error(name+' contains credential-like content');
  return v.trim();
 }
 function verifyIntake(raw){
