@@ -235,6 +235,41 @@ test('partial dependency API failure aborts before any promotion', async () => {
   assert.deepEqual(calls, []);
 });
 
+test('partial sanitized report retains promotions when a later API call fails', async () => {
+  const task = coordinatorTask();
+  const planned = issue(task, {
+    labels: [
+      {name: 'agent:planned'},
+      {name: `agent:role:${task.role}`},
+      {name: `priority:${task.priority}`}
+    ]
+  });
+  const {github} = orchestrationGithub({
+    issues: [planned], openPrs: [{number: 44, body: 'Closes #17'}], failDependency: 44
+  });
+  await assert.rejects(runCoordinator(github), error => {
+    assert.deepEqual(error.orchestrationReport.promoted, [task.issue]);
+    assert.equal(error.orchestrationReport.decision, 'error');
+    assert.doesNotMatch(JSON.stringify(error.orchestrationReport), /partial API failure/);
+    return true;
+  });
+});
+
+test('stale main catalog snapshots cannot promote or merge work', async () => {
+  const task = coordinatorTask();
+  const planned = issue(task, {
+    labels: [
+      {name: 'agent:planned'},
+      {name: `agent:role:${task.role}`},
+      {name: `priority:${task.priority}`}
+    ]
+  });
+  const {github, calls} = orchestrationGithub({issues: [planned]});
+  github.rest.repos.getBranch = async () => ({data: {commit: {sha: 'c'.repeat(40)}}});
+  await assert.rejects(runCoordinator(github), /failed closed/);
+  assert.deepEqual(calls, []);
+});
+
 test('newest CI run wins regardless of an older run attempt number', async () => {
   const staleSuccess = mergeMocks({
     workflowRuns: [
@@ -252,6 +287,28 @@ test('newest CI run wins regardless of an older run attempt number', async () =>
   });
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(staleSuccess)), false);
   assert.equal(staleSuccess.calls.length, 0);
+
+  const newestAttempt = mergeMocks({
+    workflowRuns: [
+      {
+        id: 101, created_at: '2026-11-06T09:00:00Z', run_attempt: 8,
+        workflow_id: 12, head_sha: headSha, event: 'pull_request',
+        status: 'completed', conclusion: 'success'
+      },
+      {
+        id: 102, created_at: '2026-11-06T09:00:00Z', run_attempt: 1,
+        workflow_id: 12, head_sha: headSha, event: 'pull_request',
+        status: 'completed', conclusion: 'success'
+      },
+      {
+        id: 102, created_at: '2026-11-06T09:00:00Z', run_attempt: 2,
+        workflow_id: 12, head_sha: headSha, event: 'pull_request',
+        status: 'completed', conclusion: 'failure'
+      }
+    ]
+  });
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(newestAttempt)), false);
+  assert.equal(newestAttempt.calls.length, 0);
 });
 
 test('final issue reread must retain approval, role, file scope, and dependency metadata', async () => {
@@ -289,9 +346,9 @@ test('current existing work is evaluated but CI workflow changes remain manual-r
   const data = catalog();
   const existing = data.existingWork[0];
   const workIssue = issue({
-    issue: existing.issue, role: existing.role, priority: existing.priority,
-    files: existing.files, dependsOn: existing.dependsOn
-  }, {body: `Files: ${existing.files.join(', ')}`});
+    issue: existing.issue, role: existing.role, priority: 'p1',
+    files: existing.files, dependsOn: []
+  }, {body: `Files: ${existing.files.join(', ')}\nDepends-On: none`});
   const listSummary = {number: existing.pullRequest, body: `Closes #${existing.issue}`};
   const detailed = {
     ...listSummary,
@@ -317,6 +374,23 @@ test('current existing work is evaluated but CI workflow changes remain manual-r
   assert.deepEqual(detailedReads, [existing.pullRequest]);
   assert.deepEqual(result.merged, []);
   assert.deepEqual(result.blockers, [`manual-workflow-review:#${existing.pullRequest}`]);
+});
+
+test('existing work with missing issue dependency metadata is reported as held', async () => {
+  const existing = catalog().existingWork[0];
+  const workIssue = issue({
+    issue: existing.issue, role: existing.role, priority: 'p1',
+    files: existing.files, dependsOn: []
+  }, {body: `Files: ${existing.files.join(', ')}`});
+  const summary = {number: existing.pullRequest, body: `Closes #${existing.issue}`};
+  const detail = {...summary, state: 'open'};
+  const {github, detailedReads} = orchestrationGithub({
+    issues: [workIssue], openPrs: [summary], allPrs: [summary],
+    detailedPrs: {[existing.pullRequest]: detail}
+  });
+  const report = await runCoordinator(github);
+  assert.deepEqual(detailedReads, [existing.pullRequest]);
+  assert.deepEqual(report.blockers, [`existing-work-metadata:#${existing.issue}/PR#${existing.pullRequest}`]);
 });
 
 test('list summaries are detailed before a real-format COMMENTED review can authorize merge', async () => {
@@ -370,7 +444,7 @@ function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflow
   pendingReviewRequest = false, lateReviewRequest = false, lateChangesRequested = false, changedFiles,
   reportedChangedFiles, workflowRuns, finalIssue, finalIssueAfterFirstRead,
   finalBase = mainSha, author = 'copilot-swe-agent[bot]', finalMain = mainSha,
-  finalMainAfterFirstRead, reviewUser = 'copilot-pull-request-reviewer[bot]',
+  finalMainAfterFirstRead, finalState = 'open', reviewUser = 'copilot-pull-request-reviewer[bot]',
   branch = 'copilot/task-17'} = {}) {
   const calls = [];
   let reviewRequestCalls = 0;
@@ -379,7 +453,9 @@ function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflow
   let mainReadCalls = 0;
   const workflow = {id: 12, path: orchestration.REQUIRED_WORKFLOW.path, name: orchestration.REQUIRED_WORKFLOW.name};
   const task = coordinatorTask();
-  const fileList = changedFiles || [task.files[0]];
+  const fileEntries = (changedFiles || [task.files[0]]).map(file =>
+    typeof file === 'string' ? {filename: file} : file);
+  const fileList = fileEntries.map(file => file.filename);
   const reviewText = reviewBody ?? `### ✅ Approval recommended
 
 **No open issues** 🎉
@@ -403,7 +479,7 @@ ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}
   const linkedIssue = issue(task);
   const github = {
     paginate: async (method) => {
-      if (method === github.rest.pulls.listFiles) return fileList.map(filename => ({filename}));
+      if (method === github.rest.pulls.listFiles) return fileEntries;
       if (method === github.rest.actions.listWorkflowRuns) return workflowRuns || [{
         id: 100, created_at: '2026-11-06T09:00:00Z',
         workflow_id: ciWorkflowId, head_sha: head, event: 'pull_request',
@@ -418,6 +494,7 @@ ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}
           commit_id: reviewHead, body: reviewText, submitted_at: '2026-11-06T09:00:00Z'
         }] : [];
       }
+      if (method === github.rest.pulls.list) return [];
       if (method === github.rest.pulls.listReviewComments) return [];
       throw Error('unexpected paginate');
     },
@@ -435,7 +512,8 @@ ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}
           return {data: {users: pending ? [{login: 'reviewer'}] : [], teams: []}};
         },
         get: async () => ({data: {
-          ...pr, ...(finalBase !== mainSha ? {base: {...pr.base, sha: finalBase}} : {}),
+          ...pr, state: finalState,
+          ...(finalBase !== mainSha ? {base: {...pr.base, sha: finalBase}} : {}),
           head: {...pr.head, sha: head}, base: {...pr.base, sha: finalBase}
         }}),
         merge: async args => {calls.push(args);return {data: {merged: true}}}
@@ -493,6 +571,7 @@ test('merge requires authenticated CI and final review of changed files on the c
     {reportedChangedFiles: 2},
     {changedFiles: [coordinatorTask().files[0]], finalIssue: issue(coordinatorTask(), {state: 'closed'})},
     {changedFiles: [coordinatorTask().files[0]], finalBase: 'c'.repeat(40)},
+    {finalState: 'closed'},
     {changedFiles: ['.github/workflows/ci.yml']},
     {author: 'someone-else'},
     {branch: 'feature/task-17'}
@@ -501,6 +580,21 @@ test('merge requires authenticated CI and final review of changed files on the c
     assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(invalid)), false);
     assert.equal(invalid.calls.length, 0);
   }
+});
+
+test('rename sources are scope-checked but only destination paths require review coverage', async () => {
+  const task = coordinatorTask();
+  const allowedRename = mergeMocks({
+    changedFiles: [{filename: task.files[0], previous_filename: task.files[1]}]
+  });
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(allowedRename)), true);
+  assert.equal(allowedRename.calls.length, 1);
+
+  const outOfScopeRename = mergeMocks({
+    changedFiles: [{filename: task.files[0], previous_filename: 'README.md'}]
+  });
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(outOfScopeRename)), false);
+  assert.equal(outOfScopeRename.calls.length, 0);
 });
 
 test('new head SHA must have its own successful CI, review, and expected merge SHA', async () => {

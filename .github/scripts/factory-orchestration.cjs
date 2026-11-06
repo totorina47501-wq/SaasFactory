@@ -57,17 +57,21 @@ function validateCatalog(catalog) {
   'Catalog limits do not match the orchestration contract');
   assert(Array.isArray(catalog.tasks) && Array.isArray(catalog.externalHolds), 'Catalog collections are missing');
   assert(Array.isArray(catalog.existingWork), 'Catalog existing work is missing');
+  const existingPullRequests = new Set();
   for (const work of catalog.existingWork) {
     assertExactKeys(work, new Set([
       'issue', 'pullRequest', 'role', 'priority', 'dependsOn', 'statusAtSnapshot',
       'automationAuthorized', 'files', 'note'
     ]), 'Existing work');
     assert(Number.isSafeInteger(work.issue) && Number.isSafeInteger(work.pullRequest) &&
-      ROLES.has(work.role) && /^p[012]$/.test(work.priority) &&
-      Array.isArray(work.dependsOn) && work.automationAuthorized === true,
+      ROLES.has(work.role) && (work.priority === undefined || /^p[012]$/.test(work.priority)) &&
+      (work.dependsOn === undefined || Array.isArray(work.dependsOn)) &&
+      work.automationAuthorized === true,
     'Invalid existing work record');
+    assert(!existingPullRequests.has(work.pullRequest), 'Duplicate existing work PR');
+    existingPullRequests.add(work.pullRequest);
     assertScope(work.files);
-    for (const dependency of work.dependsOn) {
+    for (const dependency of work.dependsOn || []) {
       assertExactKeys(dependency, DEPENDENCY_KEYS, 'Existing work dependency');
       assert(['issue', 'pull_request'].includes(dependency.kind) &&
         Number.isSafeInteger(dependency.number) && dependency.number > 0,
@@ -103,7 +107,7 @@ function validateCatalog(catalog) {
     tasks.set(work.issue, {
       issue: work.issue, pullRequest: work.pullRequest, role: work.role,
       priority: work.priority, files: work.files,
-      dependsOn: work.dependsOn, automationAuthorized: work.automationAuthorized,
+      dependsOn: work.dependsOn || [], automationAuthorized: work.automationAuthorized,
       existingWork: true
     });
   }
@@ -195,14 +199,15 @@ function taskMetadataMatches(task, issue, requireApproved = true) {
   const priorityLabels = labels.filter(label => /^priority:p[012]$/.test(label));
   const files = issueFiles(issue.body || '');
   const dependencies = issueDependencies(issue.body || '', task);
-  const noDeclaredLegacyDependencies = task.existingWork && task.dependsOn.length === 0 &&
-    !/^Depends-On:/im.test(issue.body || '');
+  const priorityMatches = task.existingWork && task.priority === undefined
+    ? priorityLabels.length === 1
+    : priorityLabels.length === 1 && priorityLabels[0] === `priority:${task.priority}`;
   return !isUnplanned(labels) && (!requireApproved || labels.includes('agent:approved')) &&
     task.automationAuthorized === true &&
     roleLabels.length === 1 && roleLabels[0] === `agent:role:${task.role}` &&
-    priorityLabels.length === 1 && priorityLabels[0] === `priority:${task.priority}` &&
+    priorityMatches &&
     files && files.length === task.files.length && task.files.every(file => files.includes(file)) &&
-    (noDeclaredLegacyDependencies || sameDependencies(dependencies, task.dependsOn));
+    sameDependencies(dependencies, task.dependsOn || []);
 }
 
 function linkedIssueNumbers(body) {
@@ -296,9 +301,11 @@ async function trustedCi(github, owner, repo, workflow, sha) {
     !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1 ||
     !Number.isFinite(Date.parse(run.created_at)))) return false;
   matching.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) ||
-    (Number(b.id) - Number(a.id)) ||
-    (a.id === b.id && b.run_attempt - a.run_attempt));
-  return matching[0].status === 'completed' && matching[0].conclusion === 'success';
+    Number(b.id) - Number(a.id));
+  const newestRunId = matching[0].id;
+  const newestAttempt = matching.filter(run => run.id === newestRunId)
+    .sort((a, b) => b.run_attempt - a.run_attempt)[0];
+  return newestAttempt.status === 'completed' && newestAttempt.conclusion === 'success';
 }
 
 function reviewFiles(body) {
@@ -323,9 +330,8 @@ function reviewFiles(body) {
 }
 
 async function trustedReview({github, owner, repo, pr, changedFiles, headSha}) {
-  const [reviews, comments, requested, threads] = await Promise.all([
+  const [reviews, requested, threads] = await Promise.all([
     github.paginate(github.rest.pulls.listReviews, {owner, repo, pull_number: pr.number, per_page: 100}),
-    github.paginate(github.rest.pulls.listReviewComments, {owner, repo, pull_number: pr.number, per_page: 100}),
     github.rest.pulls.listRequestedReviewers({owner, repo, pull_number: pr.number}),
     (async () => {
       const all = [];
@@ -365,7 +371,8 @@ async function trustedReview({github, owner, repo, pr, changedFiles, headSha}) {
 async function mergeEligiblePullRequest({
   github, owner, repo, pr, task, issue, workflow, mainSha, tasks, issuesByNumber, allPrs,
 }) {
-  if (pr.merged === true || pr.base?.repo?.full_name !== REPOSITORY || pr.head?.repo?.full_name !== REPOSITORY ||
+  if (pr.state !== 'open' || pr.merged === true ||
+    pr.base?.repo?.full_name !== REPOSITORY || pr.head?.repo?.full_name !== REPOSITORY ||
     pr.base?.ref !== 'main' || pr.draft !== false ||
     !/^copilot\//.test(pr.head?.ref || '') ||
     !['copilot', 'copilot-swe-agent[bot]'].includes(pr.user?.login?.toLowerCase()) ||
@@ -382,19 +389,24 @@ async function mergeEligiblePullRequest({
   const files = await github.paginate(github.rest.pulls.listFiles, {
     owner, repo, pull_number: pr.number, per_page: 100
   });
-  if (!Number.isSafeInteger(pr.changed_files) || pr.changed_files < 1 ||
-    files.length !== pr.changed_files || files.some(file => typeof file.filename !== 'string')) return false;
-  const changedFiles = [...new Set(files.flatMap(file =>
+  if (!Array.isArray(files) || !Number.isSafeInteger(pr.changed_files) || pr.changed_files < 1 ||
+    files.length !== pr.changed_files || files.some(file => !file ||
+      typeof file.filename !== 'string' || !file.filename ||
+      (file.previous_filename != null && typeof file.previous_filename !== 'string')) ||
+    new Set(files.map(file => file.filename)).size !== files.length) return false;
+  const reviewedFiles = files.map(file => file.filename);
+  const scopeFiles = [...new Set(files.flatMap(file =>
     [file.filename, file.previous_filename].filter(Boolean)))];
-  if (!changedFiles.length || changedFiles.some(file => !pathAllowed(file, task.files)) ||
-    changedFiles.some(file => file.startsWith('.github/workflows/'))) return false;
+  if (!scopeFiles.length || scopeFiles.some(file => !pathAllowed(file, task.files)) ||
+    scopeFiles.some(file => file.startsWith('.github/workflows/'))) return false;
   if (!await trustedCi(github, owner, repo, workflow, pr.head.sha)) return false;
-  if (!await trustedReview({github, owner, repo, pr, changedFiles, headSha: pr.head.sha})) return false;
+  if (!await trustedReview({github, owner, repo, pr, changedFiles: reviewedFiles, headSha: pr.head.sha})) return false;
 
-  const [latest, main, latestIssue] = await Promise.all([
+  const [latest, main, latestIssue, currentPrs] = await Promise.all([
     github.rest.pulls.get({owner, repo, pull_number: pr.number}),
     github.rest.repos.getBranch({owner, repo, branch: 'main'}),
-    github.rest.issues.get({owner, repo, issue_number: task.issue})
+    github.rest.issues.get({owner, repo, issue_number: task.issue}),
+    github.paginate(github.rest.pulls.list, {owner, repo, state: 'all', per_page: 100})
   ]);
   const latestPr = latest.data;
   if (latestPr.merged === true || latestPr.state !== 'open' || latestPr.head?.sha !== pr.head.sha ||
@@ -412,15 +424,17 @@ async function mergeEligiblePullRequest({
   const currentIssues = new Map(issuesByNumber);
   currentIssues.set(task.issue, latestIssue.data);
   if (!await dependenciesReady({
-    github, owner, repo, task, tasks, issuesByNumber: currentIssues, allPrs, cache: new Map()
+    github, owner, repo, task, tasks, issuesByNumber: currentIssues,
+    allPrs: currentPrs, cache: new Map()
   })) return false;
   if (!await trustedReview({
-    github, owner, repo, pr: latestPr, changedFiles, headSha: pr.head.sha
+    github, owner, repo, pr: latestPr, changedFiles: reviewedFiles, headSha: pr.head.sha
   })) return false;
-  const [finalPr, finalMain, finalIssue, finalReviewRequests, finalReviews] = await Promise.all([
+  const [finalPr, finalMain, finalIssue, finalPrs, finalReviewRequests, finalReviews] = await Promise.all([
     github.rest.pulls.get({owner, repo, pull_number: pr.number}),
     github.rest.repos.getBranch({owner, repo, branch: 'main'}),
     github.rest.issues.get({owner, repo, issue_number: task.issue}),
+    github.paginate(github.rest.pulls.list, {owner, repo, state: 'all', per_page: 100}),
     github.rest.pulls.listRequestedReviewers({owner, repo, pull_number: pr.number}),
     github.paginate(github.rest.pulls.listReviews, {owner, repo, pull_number: pr.number, per_page: 100})
   ]);
@@ -443,9 +457,10 @@ async function mergeEligiblePullRequest({
   const finalIssues = new Map(currentIssues);
   finalIssues.set(task.issue, finalIssue.data);
   if (!await dependenciesReady({
-    github, owner, repo, task, tasks, issuesByNumber: finalIssues, allPrs, cache: new Map()
+    github, owner, repo, task, tasks, issuesByNumber: finalIssues,
+    allPrs: finalPrs, cache: new Map()
   }) || !await trustedReview({
-    github, owner, repo, pr: finalPr.data, changedFiles, headSha: pr.head.sha
+    github, owner, repo, pr: finalPr.data, changedFiles: reviewedFiles, headSha: pr.head.sha
   })) return false;
   const result = await github.rest.pulls.merge({
     owner, repo, pull_number: pr.number, merge_method: 'merge', sha: pr.head.sha
@@ -529,7 +544,12 @@ async function run({github, context, core, io = fs}) {
           github, owner, repo, task, tasks, issuesByNumber, allPrs, cache: dependencyCache
         })) continue;
         const latestIssue = await github.rest.issues.get({owner, repo, issue_number: task.issue});
-        if (!taskMatchesAuthorizedIssue(task, latestIssue.data)) continue;
+        if (!taskMatchesAuthorizedIssue(task, latestIssue.data)) {
+          if (task.existingWork) {
+            report.blockers.push(`existing-work-metadata:#${task.issue}/PR#${pr.number}`);
+          }
+          continue;
+        }
         if (detailedPr.changed_files > 0 && detailedPr.state === 'open' &&
           (await github.paginate(github.rest.pulls.listFiles, {
             owner, repo, pull_number: pr.number, per_page: 100
@@ -554,7 +574,9 @@ async function run({github, context, core, io = fs}) {
   } catch {
     report.decision = 'error';
     report.blockers.push('Orchestration API or evidence unavailable; no additional action was taken');
-    throw safeApiError();
+    const error = safeApiError();
+    error.orchestrationReport = report;
+    throw error;
   }
 }
 

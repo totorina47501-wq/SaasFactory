@@ -79,6 +79,7 @@ module.exports = async ({github, context, core, fs, orchestration = factoryOrche
     report.decision=`assigned:#${issue.number}`;
   } catch(e) {
     report.decision='error';
+    if (e?.orchestrationReport) report.orchestration=e.orchestrationReport;
     report.blockers.push(Number.isSafeInteger(e?.status) ? `GitHub API request failed (${e.status})` : 'Operation failed; details omitted');
     throw new Error('Dispatcher failed; details withheld');
   } finally {

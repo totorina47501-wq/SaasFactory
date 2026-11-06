@@ -56,6 +56,13 @@ test('dispatcher omits raw operation errors from reports',async()=>{
  assert.equal(x.report.decision,'error');
  assert.doesNotMatch(JSON.stringify(x.report),/SENTINEL_TOKEN_MUST_NOT_LEAK/);
 });
+test('dispatcher persists sanitized partial orchestration evidence on failure',async()=>{
+ const error=new Error('private API response');
+ error.orchestrationReport={decision:'error',promoted:[17],merged:[],blockers:['evidence unavailable']};
+ const x=await exercise([],[],{fail:true,orchestration:{run:async()=>{throw error}}});
+ assert.equal(x.report.orchestration.promoted[0],17);
+ assert.doesNotMatch(JSON.stringify(x.report),/private API response/);
+});
 const issue=(n,labels=[],body='Files: src/a.js')=>({number:n,labels:labels.map(name=>({name})),assignees:[],body});
 const pr=(n,body='',head='feature/other')=>({number:n,body,head:{ref:head},user:{login:head.startsWith('copilot/')?'Copilot':'someone'},draft:true});
 test('idle without explicitly approved issues',async()=>{const x=await exercise([issue(2)]);assert.equal(x.report.decision,'idle:no-approved-missions');assert.equal(x.calls.length,0)});
