@@ -140,3 +140,39 @@ test('review signal has no privileged credentials or untrusted checkout',()=>{
  assert.doesNotMatch(signal,/^\s*(?:- uses: actions\/checkout|github-token:|pull_request_target:)/m);
  assert.doesNotMatch(signal,/\$\{\{\s*secrets\./);
 });
+
+test('privileged dispatcher checks review-signal job evidence before user token access',()=>{
+ const workflow=fs.readFileSync(require('node:path').join(__dirname,'../.github/workflows/saas-factory-agent-dispatch.yml'),'utf8');
+ const preflight=workflow.indexOf('Verify trusted review notification job before privileged dispatch');
+ const token=workflow.indexOf('Require Copilot user token');
+ assert.ok(preflight>=0 && preflight<token);
+ const block=workflow.slice(preflight,token);
+ assert.match(block,/github\.rest\.actions\.getWorkflow/);
+ assert.match(block,/saas-factory-review-signal\.yml/);
+ assert.match(block,/github\.rest\.actions\.listJobsForWorkflowRun/);
+ assert.match(block,/j\.name === 'notify' && j\.status === 'completed' && j\.conclusion === 'success'/);
+ assert.doesNotMatch(block,/COPILOT_DISPATCH_TOKEN|secrets\./);
+});
+test('dispatch workflow full gate rejects untrusted review and CI events',()=>{
+ const vm=require('node:vm');
+ const workflow=fs.readFileSync(require('node:path').join(__dirname,'../.github/workflows/saas-factory-agent-dispatch.yml'),'utf8');
+ const expression=workflow.match(/^\s+if: \$\{\{\s*(.+?)\s*\}\}\s*$/m)?.[1];
+ assert.ok(expression,'dispatcher job guard missing');
+ const repo='totorina47501-wq/SaasFactory',sha='a'.repeat(40);
+ const base={name:'SaaS Factory CI',event:'push',head_branch:'main',head_sha:sha,
+   head_repository:{full_name:repo},conclusion:'success'};
+ const check=(event,opts={})=>vm.runInNewContext(expression,{
+   github:{repository:repo,ref:opts.ref||'refs/heads/main',sha,event_name:opts.eventName||'workflow_run',event:{workflow_run:event}},
+   startsWith:(value,prefix)=>String(value).startsWith(prefix)
+ },{timeout:100});
+ assert.equal(check(base),true);
+ assert.equal(check({...base,head_sha:'b'.repeat(40)}),false);
+ assert.equal(check({...base,conclusion:'failure'}),false);
+ assert.equal(check({...base,head_repository:{full_name:'other/repo'}}),false);
+ assert.equal(check({...base,head_branch:'feature/untrusted',event:'pull_request'}),false);
+ assert.equal(check({...base,head_branch:'copilot/valid',event:'pull_request',head_sha:'b'.repeat(40)}),true);
+ assert.equal(check({...base,name:'SaaS Factory trusted review signal',event:'pull_request_review',head_branch:'copilot/valid'}),true);
+ assert.equal(check({...base,name:'SaaS Factory trusted review signal',event:'pull_request_review',conclusion:'skipped'}),false);
+ assert.equal(check(base,{ref:'refs/pull/2/merge'}),false);
+ assert.equal(check(base,{eventName:'schedule'}),true);
+});
