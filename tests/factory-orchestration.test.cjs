@@ -197,9 +197,11 @@ test('partial dependency API failure aborts before any promotion', async () => {
 
 function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflowId = 12,
   review = true, comments = true, unresolved = false, changesRequested = false,
-  pendingReviewRequest = false, changedFiles,
+  pendingReviewRequest = false, lateReviewRequest = false, lateChangesRequested = false, changedFiles,
   author = 'copilot-swe-agent[bot]', branch = 'copilot/task-17'} = {}) {
   const calls = [];
+  let reviewRequestCalls = 0;
+  let reviewCalls = 0;
   const workflow = {id: 12, path: orchestration.REQUIRED_WORKFLOW.path, name: orchestration.REQUIRED_WORKFLOW.name};
   const pr = {
     number: 45,
@@ -221,11 +223,15 @@ function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflow
         workflow_id: ciWorkflowId, head_sha: head, event: 'pull_request',
         status: 'completed', conclusion: 'success', run_attempt: 1
       }];
-      if (method === github.rest.pulls.listReviews) return review ? [{
-        id: 8, user: {login: 'copilot-pull-request-reviewer[bot]'},
-        state: changesRequested ? 'CHANGES_REQUESTED' : 'APPROVED',
-        commit_id: head, submitted_at: '2026-11-06T09:00:00Z'
-      }] : [];
+      if (method === github.rest.pulls.listReviews) {
+        reviewCalls++;
+        const requestsChanges = changesRequested || (lateChangesRequested && reviewCalls > 1);
+        return review ? [{
+          id: 8, user: {login: 'copilot-pull-request-reviewer[bot]'},
+          state: requestsChanges ? 'CHANGES_REQUESTED' : 'APPROVED',
+          commit_id: head, submitted_at: '2026-11-06T09:00:00Z'
+        }] : [];
+      }
       if (method === github.rest.pulls.listReviewComments) return comments ? [{
         pull_request_review_id: 8,
         user: {login: 'copilot-pull-request-reviewer[bot]'},
@@ -241,9 +247,11 @@ function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflow
     rest: {
       pulls: {
         listFiles() {}, listReviews() {}, listReviewComments() {},
-        listRequestedReviewers: async () => ({data: {
-          users: pendingReviewRequest ? [{login: 'reviewer'}] : [], teams: []
-        }}),
+        listRequestedReviewers: async () => {
+          reviewRequestCalls++;
+          const pending = pendingReviewRequest || (lateReviewRequest && reviewRequestCalls > 1);
+          return {data: {users: pending ? [{login: 'reviewer'}] : [], teams: []}};
+        },
         get: async () => ({data: {...pr, head: {...pr.head, sha: head}, base: {...pr.base, sha: mainSha}}}),
         merge: async args => {calls.push(args);return {data: {merged: true}}}
       },
@@ -271,6 +279,7 @@ test('merge requires authenticated CI and final review of changed files on the c
     {unresolved: true},
     {changesRequested: true},
     {pendingReviewRequest: true},
+    {lateChangesRequested: true},
     {changedFiles: ['README.md']},
     {author: 'someone-else'},
     {branch: 'feature/task-17'}
@@ -313,6 +322,15 @@ test('merge never retries changed heads or already merged PRs', async () => {
     workflow: replay.workflow, mainSha
   }), false);
   assert.equal(replay.calls.length, 0);
+});
+
+test('merge rechecks reviewer requests immediately before merging', async () => {
+  const lateRequest = mergeMocks({lateReviewRequest: true});
+  assert.equal(await orchestration.mergeEligiblePullRequest({
+    ...lateRequest, issue: lateRequest.linkedIssue, owner: 'totorina47501-wq',
+    repo: 'SaasFactory', workflow: lateRequest.workflow, mainSha
+  }), false);
+  assert.equal(lateRequest.calls.length, 0);
 });
 
 test('recovery attempts stop at two for one PR/SHA', () => {

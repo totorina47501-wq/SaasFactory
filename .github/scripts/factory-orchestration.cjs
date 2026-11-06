@@ -352,6 +352,28 @@ async function mergeEligiblePullRequest({github, owner, repo, pr, task, issue, w
     latestPr.base?.sha !== main.data.commit?.sha || latestPr.base?.ref !== 'main' ||
     latestPr.mergeable !== true ||
     latestPr.mergeable_state !== 'clean' || latestPr.draft !== false) return false;
+  if (!await trustedReview({
+    github, owner, repo, pr: latestPr, changedFiles, headSha: pr.head.sha
+  })) return false;
+  const [finalPr, finalMain, finalReviewRequests, finalReviews] = await Promise.all([
+    github.rest.pulls.get({owner, repo, pull_number: pr.number}),
+    github.rest.repos.getBranch({owner, repo, branch: 'main'}),
+    github.rest.pulls.listRequestedReviewers({owner, repo, pull_number: pr.number}),
+    github.paginate(github.rest.pulls.listReviews, {owner, repo, pull_number: pr.number, per_page: 100})
+  ]);
+  assert(Array.isArray(finalReviewRequests.data?.users) && Array.isArray(finalReviewRequests.data?.teams),
+    'Final review request evidence is incomplete');
+  assert(Array.isArray(finalReviews), 'Final review evidence is incomplete');
+  if (finalReviewRequests.data.users.length || finalReviewRequests.data.teams.length ||
+    finalReviews.some(review => review.state === 'CHANGES_REQUESTED') ||
+    finalPr.data.merged === true || finalPr.data.head?.sha !== pr.head.sha ||
+    finalPr.data.head?.ref !== pr.head.ref || finalPr.data.head?.repo?.full_name !== REPOSITORY ||
+    finalPr.data.user?.login !== pr.user?.login ||
+    finalPr.data.base?.ref !== 'main' || finalPr.data.base?.repo?.full_name !== REPOSITORY ||
+    finalPr.data.base?.sha !== finalMain.data.commit?.sha || finalPr.data.mergeable !== true ||
+    finalPr.data.mergeable_state !== 'clean' || finalPr.data.draft !== false ||
+    linkedIssueNumbers(finalPr.data.body || '').length !== 1 ||
+    linkedIssueNumbers(finalPr.data.body || '')[0] !== task.issue) return false;
   const result = await github.rest.pulls.merge({
     owner, repo, pull_number: pr.number, merge_method: 'merge', sha: pr.head.sha
   });
