@@ -14,6 +14,13 @@ const blockedComment =
   'Automated CI recovery is blocked after the maximum of two correction requests for this commit. Human review is required.';
 
 const labelsOf = (item) => (item.labels || []).map((label) => (typeof label === 'string' ? label : label.name));
+const SPECIALISTS = new Set(['product-architect','generator-engineer','qa-engineer','security-engineer','platform-engineer','ux-accessibility','documentation-release']);
+function approvedIssue(issue) {
+  const labels=labelsOf(issue);
+  const roles=labels.filter(label=>typeof label==='string'&&label.startsWith('agent:role:'));
+  return !issue.pull_request && issue.state==='open' && labels.includes(APPROVAL_LABEL) &&
+    roles.length===1 && SPECIALISTS.has(roles[0].slice('agent:role:'.length));
+}
 
 function markerFor({pr, sha, runId, attempt, status}) {
   return `<!-- saas-factory-ci-recovery:v1;pr=${pr};sha=${sha};run=${runId};attempt=${attempt};status=${status}-->`;
@@ -36,9 +43,13 @@ function parseMarker(body) {
 function recoveryLedger(comments, pr, sha) {
   const entries = [];
   for (const comment of comments) {
+    if (!comment || typeof comment.user?.login !== 'string' || !comment.user.login || typeof comment.body !== 'string') {
+      throw new Error('Unverifiable recovery comment');
+    }
     if (comment.user?.login !== BOT_LOGIN || !comment.body?.includes(RECOVERY_MARKER)) continue;
     const marker = parseMarker(comment.body);
-    if (marker.pr === pr && marker.sha === sha.toLowerCase()) entries.push(marker);
+    if (marker.pr !== pr) throw new Error('Recovery marker references a different PR');
+    if (marker.sha === sha.toLowerCase()) entries.push(marker);
   }
   const runs = new Set();
   for (const entry of entries) {
@@ -124,7 +135,7 @@ module.exports = async ({github, context, core}) => {
     const issueResult = await github.rest.issues.get({
       owner, repo, issue_number: Number(linkedIssue[1])
     });
-    if (issueResult.data.state !== 'open' || !labelsOf(issueResult.data).includes(APPROVAL_LABEL)) return await finish();
+    if (!approvedIssue(issueResult.data)) return await finish();
 
     const comments = await loadRecoveryComments(github, owner, repo, prNumber);
     const {entries, retries} = recoveryLedger(comments, prNumber, report.sha);
@@ -164,8 +175,7 @@ module.exports = async ({github, context, core}) => {
         latestPr.head?.ref !== run.head_branch || latestPr.head?.sha?.toLowerCase() !== report.sha ||
         latestPr.head?.repo?.full_name !== expectedRepo ||
         !COPILOT_LOGINS.has((latestPr.user?.login || '').toLowerCase()) ||
-        latestLink?.[1] !== linkedIssue[1] || latestIssue.state !== 'open' ||
-        !labelsOf(latestIssue).includes(APPROVAL_LABEL)) {
+        latestLink?.[1] !== linkedIssue[1] || !approvedIssue(latestIssue)) {
       report.decision = 'ignored:eligibility-changed';
       return await finish();
     }

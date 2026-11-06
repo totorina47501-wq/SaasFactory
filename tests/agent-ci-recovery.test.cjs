@@ -30,10 +30,30 @@ test('uppercase ledger statuses cannot reset the retry quota or bypass a block',
 });
 
 test('changes during ledger pagination invalidate eligibility before any write', async () => {
-  for(const drift of ['head','close','revoke','link','base','author']) {
+  for(const drift of ['head','close','revoke','link','base','author','role']) {
     const state=await exercise({drift});
     assert.equal(state.created.length,0,drift);
     assert.equal(state.report.decision,'ignored:eligibility-changed',drift);
+  }
+});
+
+test('unverifiable authors and inconsistent PR markers cannot reset the quota', async () => {
+  const valid=[];
+  await exercise({comments:valid,runId:1});
+  for(const broken of [
+    {...valid[0],user:null},
+    {...valid[0],body:null},
+    {...valid[0],body:valid[0].body.replace(';pr=12;',';pr=99;')}
+  ]) {
+    await assert.rejects(exercise({comments:[broken],runId:2}),/failed closed/);
+  }
+});
+
+test('recovery requires exactly one valid specialist role', async () => {
+  for(const roles of [[],['unknown'],['platform-engineer','qa-engineer']]) {
+    const state=await exercise({roles});
+    assert.equal(state.created.length,0);
+    assert.equal(state.report.decision,'ignored');
   }
 });
 
@@ -83,7 +103,7 @@ function fixture(options = {}) {
   };
   const issue = {
     state: options.issueState || 'open',
-    labels: options.approved === false ? [] : [{name: 'agent:approved'}]
+    labels: options.approved === false ? [] : [{name: 'agent:approved'},...(options.roles??['platform-engineer']).map(role=>({name:'agent:role:'+role}))]
   };
   const github = {
     rest: {
@@ -119,6 +139,7 @@ function fixture(options = {}) {
           if(options.drift==='link')pr.body='Fixes #7';
           if(options.drift==='base')pr.base.ref='other';
           if(options.drift==='author')pr.user.login='someone';
+          if(options.drift==='role')issue.labels=[{name:'agent:approved'}];
           return {data: comments.slice((page - 1) * 100, page * 100)};
         },
         createComment: async (request) => {
