@@ -1,0 +1,34 @@
+name: SaaS Factory one final Copilot review
+on:
+  workflow_run:
+    workflows: ['SaaS Factory CI']
+    types: [completed]
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  issues: read
+concurrency:
+  group: saas-factory-one-review-budget
+  cancel-in-progress: false
+jobs:
+  final-review:
+    if: ${{ github.repository == 'totorina47501-wq/SaasFactory' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require user token
+        env:
+          CONFIGURED: ${{ secrets.COPILOT_DISPATCH_TOKEN != '' }}
+        run: test "$CONFIGURED" = 'true'
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/github-script@v7
+        name: Request exactly one final Copilot review
+        with:
+          github-token: ${{ secrets.COPILOT_DISPATCH_TOKEN }}
+          script: |
+            const {run} = require('./.github/scripts/final-review-once.cjs');
+            core.info(JSON.stringify(await run({github,context,core})));
