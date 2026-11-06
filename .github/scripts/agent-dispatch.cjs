@@ -55,11 +55,21 @@ module.exports = async ({github, context, core, fs}) => {
         report.decision='blocked:file-overlap';report.blockers.push(`Issue #${issue.number} conflicts with PR #${p.number}`);return;
       }
     }
+    // Explicit specialist selection: no semantic guess or silent generic Copilot fallback.
+    const allowedRoles=new Set(["product-architect","generator-engineer","qa-engineer","security-engineer","platform-engineer","ux-accessibility","documentation-release"]);
+    const roleLabels=issue.labels.map(l=>typeof l==='string'?l:l.name).filter(name=>name.startsWith('agent:role:'));
+    if(roleLabels.length!==1 || !allowedRoles.has(roleLabels[0].slice('agent:role:'.length))){
+      report.decision='blocked:invalid-specialist-role';
+      report.blockers.push(`Issue #${issue.number} must have exactly one valid agent:role:<specialist> label`);
+      return;
+    }
+    const specialist=roleLabels[0].slice('agent:role:'.length);
+    report.specialist=specialist;
     // REST assignment support is in preview and GITHUB_TOKEN might lack authorization.
     // Do not mark success until GitHub confirms both assignee and read-back.
     await github.request('POST /repos/{owner}/{repo}/issues/{issue_number}/assignees',{
       owner,repo,issue_number:issue.number,assignees:['copilot-swe-agent[bot]'],
-      agent_assignment:{target_repo:`${owner}/${repo}`,base_branch:'main'}
+      agent_assignment:{target_repo:`${owner}/${repo}`,base_branch:'main',custom_agent:specialist}
     });
     const result=await github.rest.issues.get({owner,repo,issue_number:issue.number});
     if(!result.data.assignees.some(a=>/^(Copilot|copilot-swe-agent)(\[bot\])?$/i.test(a.login))) throw Error('Copilot assignment not confirmed by read-back');

@@ -9,3 +9,5 @@
 - No network API, paid AI provider, payment or remote deployment during generation or tests.
 - Make small isolated PRs, run `npm test` and ensure GitHub CI green. Never auto-merge code without review.
 - Keep any generated Next.js app isolated from the factory repository, in a new destination with independent configuration.
+
+- The specialist catalog is in `docs/agent-orchestration.md` and `.github/agents/*.agent.md`. Use **one** explicit `agent:role:<profile>` label per approved mission; never guess or override role from a title or Projects Status. Specialists share the same nondeployment and review gates.
