@@ -47,7 +47,7 @@ Files: path/to/file, path/to/directory/
 - [ ] Aucun doublon ni régression.
 - [ ] Documentation et tests actualisés.
 - [ ] CI verte sur SHA final.
-- [ ] Revue humaine exigée avant fusion.
+- [ ] Revue humaine exigée par défaut ; si l'automatisation est autorisée au catalogue, revue automatisée finale et contrôles d'orchestration vérifiés avant fusion.
 - [ ] Preuves externes explicitement distinguées des tests simulés.
 
 ## Traçabilité

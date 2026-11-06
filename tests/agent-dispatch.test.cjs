@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'), assert=require('node:assert/strict'), fs=require('node:fs');
 const dispatch=require('../.github/scripts/agent-dispatch.cjs');
+require('./factory-orchestration.test.cjs');
 test('dispatch workflow isolates a user token from checkout and refuses missing credentials',()=>{
  const workflow=fs.readFileSync(require('node:path').join(__dirname,'../.github/workflows/saas-factory-agent-dispatch.yml'),'utf8');
  assert.match(workflow,/github-token: \$\{\{ secrets\.COPILOT_DISPATCH_TOKEN \}\}/);
@@ -16,11 +17,16 @@ test('dispatch workflow isolates a user token from checkout and refuses missing 
  assert.match(workflow,/issues: read/);
  assert.match(workflow,/pull-requests: read/);
  assert.match(workflow,/cron: '\*\/10 \* \* \* \*'/);
+ assert.match(workflow,/agent-dispatch\.cjs/);
+ assert.match(workflow,/Coordinate, review, merge, and dispatch from main/);
+ const dispatcher=fs.readFileSync(require('node:path').join(__dirname,'../.github/scripts/agent-dispatch.cjs'),'utf8');
+ assert.match(dispatcher,/require\('\.\/factory-orchestration\.cjs'\)/);
 });
 async function exercise(issues=[],prs=[],opts={}){
  const calls=[];
+ const order=opts.order||[];
  const github={
-   paginate:async(fn,arg)=>{if(fn===github.rest.issues.listForRepo)return issues;if(fn===github.rest.pulls.list)return prs;if(fn===github.rest.pulls.listFiles)return opts.files?.[arg.pull_number]||[];throw Error('unexpected paginate')},
+   paginate:async(fn,arg)=>{order.push('github');if(fn===github.rest.issues.listForRepo)return issues;if(fn===github.rest.pulls.list)return prs;if(fn===github.rest.pulls.listFiles)return opts.files?.[arg.pull_number]||[];throw Error('unexpected paginate')},
    rest:{issues:{listForRepo(){},get:async()=>({data:{assignees:[{login:'copilot-swe-agent[bot]'}]}}),addLabels:async a=>{calls.push(['label',a]);}},pulls:{list(){},listFiles(){}}},
    request:async(_url,args)=>{calls.push(['assign',args]);if(opts.fail)throw Error('assignment refused');}
  };
@@ -28,11 +34,20 @@ async function exercise(issues=[],prs=[],opts={}){
  const writes=[];
  const core={summary:{addHeading(){return this},addRaw(){return this},async write(){}},notice(){}};
  const context={repo:{owner:'totorina47501-wq',repo:'SaasFactory'},sha:'test',runId:1};
- try{await dispatch({github,context,core,fs:{writeFileSync:(p,v)=>writes.push(JSON.parse(v))}});}
+ try{await dispatch({github,context,core,orchestration:opts.orchestration||{run:async()=>({decision:'idle'})},fs:{writeFileSync:(p,v)=>writes.push(JSON.parse(v))}});}
  catch(e){if(!opts.fail)throw e;}
  finally{if(previous===undefined)delete process.env.EXPECTED_REPO;else process.env.EXPECTED_REPO=previous}
- return {calls,report:writes.at(-1)};
+ return {calls,report:writes.at(-1),order};
 }
+test('coordinator runs before issue selection',async()=>{
+ const order=[];
+ const x=await exercise([issue(8,['agent:approved','agent:role:qa-engineer'])],[],{
+  order,
+  orchestration:{run:async()=>{order.push('coordinate');return {decision:'idle'}}}
+ });
+ assert.deepEqual(order.slice(0,2),['coordinate','github']);
+ assert.equal(x.report.orchestration.decision,'idle');
+});
 const issue=(n,labels=[],body='Files: src/a.js')=>({number:n,labels:labels.map(name=>({name})),assignees:[],body});
 const pr=(n,body='',head='feature/other')=>({number:n,body,head:{ref:head},user:{login:head.startsWith('copilot/')?'Copilot':'someone'},draft:true});
 test('idle without explicitly approved issues',async()=>{const x=await exercise([issue(2)]);assert.equal(x.report.decision,'idle:no-approved-missions');assert.equal(x.calls.length,0)});
@@ -62,4 +77,3 @@ test('specialist assignment remains limited to one issue',async()=>{
  assert.equal(x.calls.filter(a=>a[0]==='assign').length,1);
  assert.equal(x.report.specialist,'generator-engineer');
 });
-

@@ -1,14 +1,16 @@
 'use strict';
-// Fail closed: ONLY approved issues, no product deployments, no automated merges.
-module.exports = async ({github, context, core, fs}) => {
+// Fail closed: catalog-authorized coordination, then approved dispatch only.
+const factoryOrchestration = require('./factory-orchestration.cjs');
+module.exports = async ({github, context, core, fs, orchestration = factoryOrchestration}) => {
   const owner = context.repo.owner, repo = context.repo.repo;
   if (`${owner}/${repo}` !== process.env.EXPECTED_REPO) throw Error('Repository guard rejected');
-  const report = {at:new Date().toISOString(), repo:`${owner}/${repo}`, sha:context.sha, run:context.runId, decision:'none', active:[], eligible:[], blockers:[], prs:[]};
+  const report = {at:new Date().toISOString(), repo:`${owner}/${repo}`, sha:context.sha, run:context.runId, decision:'none', active:[], eligible:[], blockers:[], prs:[], orchestration:null};
   const save = () => {
     fs.writeFileSync('agent-dispatch-report.json', JSON.stringify(report,null,2)+'\n');
     core.summary.addHeading('SaaS Factory agent dispatch').addRaw('\n```json\n'+JSON.stringify(report,null,2)+'\n```\n');
   };
   try {
+    report.orchestration = await orchestration.run({github, context, core});
     const [issues, prs] = await Promise.all([
       github.paginate(github.rest.issues.listForRepo,{owner,repo,state:'open',per_page:100}),
       github.paginate(github.rest.pulls.list,{owner,repo,state:'open',per_page:100})
@@ -76,8 +78,9 @@ module.exports = async ({github, context, core, fs}) => {
     await github.rest.issues.addLabels({owner,repo,issue_number:issue.number,labels:['agent:in-progress']});
     report.decision=`assigned:#${issue.number}`;
   } catch(e) {
-    report.decision='error';report.blockers.push(e.message);
-    throw e;
+    report.decision='error';
+    report.blockers.push(Number.isSafeInteger(e.status) ? `GitHub API request failed (${e.status})` : 'Operation failed; details omitted');
+    throw new Error('Dispatcher failed; details withheld');
   } finally {
     save();
     if(new Date().getUTCHours()%6===0 && new Date().getUTCMinutes()<30) core.notice('Six-hour summary: see artifact and job summary; scheduled UTC window.');

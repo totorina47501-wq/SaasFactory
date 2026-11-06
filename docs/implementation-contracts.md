@@ -9,8 +9,8 @@ Ce document complète sans remplacer [le contrat du générateur](generator-cont
 | Domaine | Responsable | Contrat | Interdictions |
 | --- | --- | --- | --- |
 | Product Owner | Propriétaire du dépôt | Approuve la portée et les critères d'acceptation des missions | Aucune approbation implicite par carte Projects |
-| Agent Copilot | Contributeur implémentation | Un seul périmètre de fichiers, PR traçable, preuves CI | Pas de fusion, déploiement ou changement de secret autonome |
-| Dispatcher | `.github/scripts/agent-dispatch.cjs` | Traite uniquement `agent:approved`, maximum deux missions actives et une nouvelle affectation par passage | Pas de modification de la politique d'affectation par le synchroniseur |
+| Agent Copilot | Contributeur implémentation | Un seul périmètre de fichiers, PR traçable, preuves CI | Ne fusionne ni ne déploie ; aucun changement de secret |
+| Dispatcher / coordinateur | `.github/scripts/agent-dispatch.cjs`, `.github/scripts/factory-orchestration.cjs` | Affectation après coordination ; maximum deux missions actives et une affectation par passage ; promotion et fusion seulement pour une mission autorisée au catalogue et après preuves vérifiées | Aucun contournement de protection, d'autorisation ou de périmètre |
 | Sync Projects V2 | `.github/scripts/projects-v2-sync.cjs` | Réconcilie le champ `Status` des cartes déjà présentes | Ne crée pas de carte, d'issue ou de PR ; n'assigne aucun agent |
 | CI | `.github/workflows/ci.yml` | Tests reproductibles sur PR et sur `main` | Ne prouve pas un déploiement réel |
 | Sécurité | Mainteneur habilité | Contrôle du risque, secrets et droits minimaux | Secrets en logs, code, prompts, commentaires ou artefacts |
@@ -22,7 +22,7 @@ Chaque mission significative possède une **fiche d'implémentation** conforme a
 **Préconditions** :
 - Une issue unique avec besoin métier, propriétaire de la décision, priorité `P0/P1/P2`, limites du périmètre et liens vers travaux existants.
 - `Files: path1, path2` sur une ligne de l'issue pour le dispatcher ; refuser les recouvrements.
-- Le label `agent:approved` est seul autorisant l'affectation. Le statut `Approved` de Projects V2 n'est qu'une représentation visuelle.
+- Le label `agent:approved` autorise l'affectation. Seul le coordinateur peut promouvoir `agent:planned`, et uniquement depuis le catalogue v1 chargé du SHA `main` de l'événement après vérification des métadonnées et dépendances. Le statut `Approved` de Projects V2 n'est qu'une représentation visuelle.
 - Contrôler les issues et PR ouvertes, les docs, les tests et les fonctionnalités avant création : réutiliser ou compléter plutôt que dupliquer.
 
 **Postconditions** :
@@ -54,7 +54,7 @@ Une livraison ne peut être déclarée terminée que si : critères d'acceptatio
 - Droits minimaux : `GITHUB_TOKEN` lecture pour le synchroniseur ; PAT Projects V2 isolé dans `SAASFACTORY_PROJECTS_V2_TOKEN` et jamais exposé ; rotation et expiration documentées.
 - Aucune mutation Projects V2 tant que `SAASFACTORY_PROJECTS_V2_SYNC_ENABLED=true` n'est pas défini après inspection d'un dry-run.
 - Les labels pilotent l'autorisation et la progression ; GitHub Projects ne remplace jamais GitHub Issues, Reviews, checks, ni les garde-fous de branche.
-- Aucun auto-merge, changement de secrets, déploiement, transfert de données d'un autre dépôt, paiement ou activation fournisseur par un agent.
+- La fusion humaine reste le défaut. La fusion automatique est limitée aux missions autorisées au catalogue v1, aux PR Copilot vers `main`, au périmètre exact, aux checks CI authentifiés sur le SHA courant et à une revue finale automatisée vérifiant les fichiers modifiés et l'absence de fils non résolus. Elle utilise le SHA attendu et n'active pas `allow_auto_merge` ni ne modifie les protections. Aucun changement de secrets, déploiement, transfert de données d'un autre dépôt, paiement ou activation fournisseur.
 - Incident : désactiver la variable d'écriture, interrompre les exécutions concernées si nécessaire, consulter les résumés Actions, corriger par PR revue, puis relancer en dry-run.
 
 ## 7. Traçabilité et gestion du changement
