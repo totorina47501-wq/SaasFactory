@@ -197,7 +197,8 @@ test('partial dependency API failure aborts before any promotion', async () => {
 
 function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflowId = 12,
   review = true, comments = true, unresolved = false, changesRequested = false,
-  changedFiles, author = 'copilot-swe-agent[bot]', branch = 'copilot/task-17'} = {}) {
+  pendingReviewRequest = false, changedFiles,
+  author = 'copilot-swe-agent[bot]', branch = 'copilot/task-17'} = {}) {
   const calls = [];
   const workflow = {id: 12, path: orchestration.REQUIRED_WORKFLOW.path, name: orchestration.REQUIRED_WORKFLOW.name};
   const pr = {
@@ -240,6 +241,9 @@ function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflow
     rest: {
       pulls: {
         listFiles() {}, listReviews() {}, listReviewComments() {},
+        listRequestedReviewers: async () => ({data: {
+          users: pendingReviewRequest ? [{login: 'reviewer'}] : [], teams: []
+        }}),
         get: async () => ({data: {...pr, head: {...pr.head, sha: head}, base: {...pr.base, sha: mainSha}}}),
         merge: async args => {calls.push(args);return {data: {merged: true}}}
       },
@@ -266,6 +270,7 @@ test('merge requires authenticated CI and final review of changed files on the c
     {comments: false},
     {unresolved: true},
     {changesRequested: true},
+    {pendingReviewRequest: true},
     {changedFiles: ['README.md']},
     {author: 'someone-else'},
     {branch: 'feature/task-17'}

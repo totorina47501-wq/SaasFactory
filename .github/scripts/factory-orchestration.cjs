@@ -275,9 +275,10 @@ async function trustedCi(github, owner, repo, workflow, sha) {
 }
 
 async function trustedReview({github, owner, repo, pr, changedFiles, headSha}) {
-  const [reviews, comments, threads] = await Promise.all([
+  const [reviews, comments, requested, threads] = await Promise.all([
     github.paginate(github.rest.pulls.listReviews, {owner, repo, pull_number: pr.number, per_page: 100}),
     github.paginate(github.rest.pulls.listReviewComments, {owner, repo, pull_number: pr.number, per_page: 100}),
+    github.rest.pulls.listRequestedReviewers({owner, repo, pull_number: pr.number}),
     (async () => {
       const all = [];
       let after = null;
@@ -296,6 +297,9 @@ async function trustedReview({github, owner, repo, pr, changedFiles, headSha}) {
       return all;
     })()
   ]);
+  assert(Array.isArray(requested.data?.users) && Array.isArray(requested.data?.teams),
+    'Review request evidence is incomplete');
+  if (requested.data.users.length || requested.data.teams.length) return false;
   if (threads.some(thread => thread.isResolved !== true)) return false;
   if (reviews.some(review => review.state === 'CHANGES_REQUESTED')) return false;
 
