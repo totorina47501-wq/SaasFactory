@@ -19,7 +19,9 @@
       "files": [
         ".github/workflows/saas-factory-agent-ci-recovery.yml",
         ".github/scripts/agent-ci-recovery.cjs",
-        "tests/agent-ci-recovery.test.cjs"
+        "tests/agent-ci-recovery.test.cjs",
+        ".github/workflows/ci.yml",
+        "docs/catalog/factory-backlog-v1.json"
       ],
       "note": "Réutiliser sans doublon. Reprise CI désactivée tant que le déclenchement Copilot n'est pas prouvé."
     }
