@@ -38,5 +38,6 @@
   "automerge": false,
   "platformAutomerge": false,
   "rebaseWhen": "behind-base-branch",
-  "dependencyDashboardApproval": false
+  "dependencyDashboardApproval": false,
+  "enabled": false
 }

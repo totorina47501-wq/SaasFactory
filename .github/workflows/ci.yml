@@ -1,8 +1,7 @@
 name: SaaS Factory CI
+# PAUSED 2026-11-08: automated triggers removed to prevent further AI credits.
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:

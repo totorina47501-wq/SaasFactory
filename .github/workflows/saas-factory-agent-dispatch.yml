@@ -1,11 +1,7 @@
 name: SaaS Factory agent dispatch
+# PAUSED 2026-11-08: automated triggers removed to prevent further AI credits.
 on:
-  schedule:
-    - cron: '*/10 * * * *'
   workflow_dispatch:
-  workflow_run:
-    workflows: ['SaaS Factory CI', 'SaaS Factory trusted review signal']
-    types: [completed]
 permissions:
   contents: read
   issues: read

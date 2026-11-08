@@ -1,8 +1,7 @@
 name: SaaS Factory one final Copilot review
+# PAUSED 2026-11-08: automated triggers removed to prevent further AI credits.
 on:
-  workflow_run:
-    workflows: ['SaaS Factory CI']
-    types: [completed]
+  workflow_dispatch:
 permissions:
   contents: read
   actions: read

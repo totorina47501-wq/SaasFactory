@@ -1,9 +1,8 @@
 name: SaaS Factory agent CI recovery
 # Disabled by default: the @copilot comment trigger is unverified; enable only after manual confirmation.
+# PAUSED 2026-11-08: automated triggers removed to prevent further AI credits.
 on:
-  workflow_run:
-    workflows: ["SaaS Factory CI"]
-    types: [completed]
+  workflow_dispatch:
 permissions:
   actions: read
   contents: read

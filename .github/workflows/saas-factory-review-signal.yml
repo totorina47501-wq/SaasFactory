@@ -1,7 +1,7 @@
 name: SaaS Factory trusted review signal
+# PAUSED 2026-11-08: automated triggers removed to prevent further AI credits.
 on:
-  pull_request_review:
-    types: [submitted]
+  workflow_dispatch:
 # An unprivileged notification only: no repository checkout, no user token, no secrets.
 permissions: {}
 jobs:

@@ -1,7 +1,6 @@
 name: SaaS Factory exploitation report
+# PAUSED 2026-11-08: automated triggers removed to prevent further AI credits.
 on:
-  schedule:
-    - cron: '0 0,6,12,18 * * *'
   workflow_dispatch:
 permissions:
   actions: read

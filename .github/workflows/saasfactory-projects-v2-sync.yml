@@ -1,13 +1,7 @@
 name: SaaSFactory Projects V2 status sync
+# PAUSED 2026-11-08: automated triggers removed to prevent further AI credits.
 on:
-  schedule:
-    - cron: '*/10 * * * *'
   workflow_dispatch:
-    inputs:
-      apply:
-        description: Apply updates (requires enabled repository variable)
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
