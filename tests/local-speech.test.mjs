@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -13,26 +13,52 @@ import {
   localSpeechContract,
 } from '../modules/local-speech/index.mjs';
 
-const WAV = Buffer.alloc(48);
-WAV.write('RIFF', 0, 'ascii');
-WAV.writeUInt32LE(WAV.length - 8, 4);
-WAV.write('WAVE', 8, 'ascii');
-const AUDIO = Buffer.from(WAV);
+function wav(durationSeconds = 1, sampleRate = 16000) {
+  const dataBytes = durationSeconds * sampleRate * 2;
+  const result = Buffer.alloc(44 + dataBytes);
+  result.write('RIFF', 0, 'ascii');
+  result.writeUInt32LE(result.length - 8, 4);
+  result.write('WAVEfmt ', 8, 'ascii');
+  result.writeUInt32LE(16, 16);
+  result.writeUInt16LE(1, 20);
+  result.writeUInt16LE(1, 22);
+  result.writeUInt32LE(sampleRate, 24);
+  result.writeUInt32LE(sampleRate * 2, 28);
+  result.writeUInt16LE(2, 32);
+  result.writeUInt16LE(16, 34);
+  result.write('data', 36, 'ascii');
+  result.writeUInt32LE(dataBytes, 40);
+  return result;
+}
+
+const AUDIO = wav();
 const TEST_LICENSE = 'MIT';
 
 async function setup() {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'local-speech-test-'));
   const modelPath = path.join(directory, 'model.bin');
   const modelData = Buffer.from('synthetic-model');
+  const configPath = `${modelPath}.json`;
+  const configData = Buffer.from('synthetic-voice-config');
   await writeFile(modelPath, modelData, { mode: 0o600 });
+  await writeFile(configPath, configData, { mode: 0o600 });
   const model = {
     path: modelPath,
     version: 'test-1',
     license: TEST_LICENSE,
     sizeBytes: modelData.length,
     sha256: createHash('sha256').update(modelData).digest('hex'),
+    minimumMemoryBytes: 1024 * 1024,
   };
-  return { directory, model };
+  const voiceConfig = {
+    path: configPath,
+    version: 'test-1',
+    license: TEST_LICENSE,
+    sizeBytes: configData.length,
+    sha256: createHash('sha256').update(configData).digest('hex'),
+    minimumMemoryBytes: 1024 * 1024,
+  };
+  return { directory, model, voiceConfig };
 }
 
 async function fakeExecutable(directory, name, source) {
@@ -56,8 +82,8 @@ function piperEngine(executable, model, options = {}) {
   return createPiperTtsEngine({
     executable,
     runtimeVersion: '1.3.0',
-    model,
-    ...options,
+    model: { ...model, voiceConfig: options.voiceConfig },
+    ...Object.fromEntries(Object.entries(options).filter(([key]) => key !== 'voiceConfig')),
   });
 }
 
@@ -78,7 +104,9 @@ test('declares real engines as opt-in, offline and CPU-capable', () => {
   assert.equal(localSpeechContract.defaultEnabled, false);
   assert.equal(localSpeechContract.networkRequired, false);
   assert.equal(localSpeechContract.engines.asr.timestamps, true);
-  assert.deepEqual(localSpeechContract.requiredModelMetadata, ['version', 'license', 'sizeBytes', 'sha256']);
+  assert.deepEqual(localSpeechContract.requiredModelMetadata, [
+    'version', 'license', 'sizeBytes', 'sha256', 'minimumMemoryBytes',
+  ]);
 });
 
 test('Whisper adapter uses fixed argv without a shell and returns bounded timestamped draft segments', async t => {
@@ -115,6 +143,12 @@ test('rejects absent consent, overlong input, invalid language and invalid model
     'CONSENT_REQUIRED');
   await errorCode(audio.transcribe({
     consent: true, audio: AUDIO, durationSeconds: 601, language: 'en',
+  }), 'INVALID_AUDIO');
+  await errorCode(audio.transcribe({
+    consent: true, audio: AUDIO, durationSeconds: 2, language: 'en',
+  }), 'INVALID_AUDIO');
+  await errorCode(audio.transcribe({
+    consent: true, audio: wav(1, 8000), durationSeconds: 1, language: 'en',
   }), 'INVALID_AUDIO');
   await errorCode(audio.transcribe({
     consent: true, audio: AUDIO, durationSeconds: 1, language: 'fr',
@@ -166,13 +200,17 @@ test('Piper receives text over stdin, never through shell arguments, and returns
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', chunk => { text += chunk; });
     process.stdin.on('end', () => {
-      const wav = Buffer.alloc(48);
-      wav.write('RIFF', 0); wav.writeUInt32LE(40, 4); wav.write('WAVE', 8);
+      const wav = Buffer.alloc(46);
+      wav.write('RIFF', 0); wav.writeUInt32LE(38, 4); wav.write('WAVEfmt ', 8);
+      wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+      wav.writeUInt32LE(22050, 24); wav.writeUInt32LE(44100, 28);
+      wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+      wav.write('data', 36); wav.writeUInt32LE(2, 40);
       fs.writeFileSync(${JSON.stringify(receivedPath)}, text);
       fs.writeFileSync(output, wav);
     });
   `);
-  const engine = piperEngine(executable, state.model);
+  const engine = piperEngine(executable, state.model, { voiceConfig: state.voiceConfig });
   const audio = speech(whisperEngine(
     await fakeExecutable(state.directory, 'whisper', 'process.exit(0);'),
     state.model,
@@ -186,6 +224,13 @@ test('Piper receives text over stdin, never through shell arguments, and returns
   assert.equal(output.data.toString('ascii', 0, 4), 'RIFF');
   assert.equal(await readFile(receivedPath, 'utf8'), `safe input; touch "${marker}"; echo "not executed"`);
   await assert.rejects(readFile(marker), { code: 'ENOENT' });
+  const invalidConfig = {
+    ...state.voiceConfig,
+    sha256: '0'.repeat(64),
+  };
+  await errorCode(piperEngine(executable, state.model, { voiceConfig: invalidConfig }).synthesize({
+    text: 'synthetic voice',
+  }), 'MODEL_INTEGRITY_FAILED');
 });
 
 test('demo output is deterministic and explicitly not an ASR or TTS result', async () => {

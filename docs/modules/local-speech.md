@@ -46,6 +46,7 @@ const asr = createWhisperCppAsrEngine({
     license: 'licence-du-modele',
     sizeBytes: 1,
     sha256: 'a'.repeat(64),
+    minimumMemoryBytes: 1,
   },
   languages: ['fr'],
 });
@@ -58,13 +59,27 @@ const tts = createPiperTtsEngine({
     license: 'licence-de-la-voix',
     sizeBytes: 1,
     sha256: 'b'.repeat(64),
+    minimumMemoryBytes: 1,
+    voiceConfig: {
+      path: '/opt/local-speech/voice.onnx.json',
+      version: 'version-de-la-configuration',
+      license: 'licence-de-la-configuration',
+      sizeBytes: 1,
+      sha256: 'c'.repeat(64),
+      minimumMemoryBytes: 1,
+    },
   },
 });
 const speech = createLocalSpeechService({ asrEngine: asr, ttsEngine: tts });
 ```
 
-Les tailles et empreintes de l'exemple sont des valeurs factices invalides en
-production. Pour calculer les informations du modèle déjà installé :
+Les tailles, empreintes et budgets mémoire de l'exemple sont des valeurs
+factices invalides en production. Renseigner un `minimumMemoryBytes` réaliste
+pour chaque artefact selon les exigences du modèle et la mémoire de pointe
+mesurée avec le moteur/version choisis. Le module publie cette exigence dans ses
+métadonnées et refuse une valeur inférieure à la taille du fichier. Les exigences
+CPU/RAM dépendent du modèle et ne peuvent pas être déduites uniquement de sa
+taille sur disque. Pour calculer la taille et l'empreinte d'un fichier installé :
 
 ```sh
 stat -c '%s' /opt/local-speech/ggml-model.bin

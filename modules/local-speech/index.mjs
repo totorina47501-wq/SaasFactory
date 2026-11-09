@@ -61,8 +61,8 @@ function validateLimits(value = {}) {
   return Object.freeze(limits);
 }
 
-function validateModel(value) {
-  exactObject(value, ['path', 'version', 'license', 'sizeBytes', 'sha256']);
+function validateArtifact(value) {
+  exactObject(value, ['path', 'version', 'license', 'sizeBytes', 'sha256', 'minimumMemoryBytes']);
   if (typeof value.path !== 'string' || !path.isAbsolute(value.path) ||
       path.resolve(value.path) !== value.path || /[\0-\x1f\x7f]/u.test(value.path) ||
       typeof value.version !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.+_-]{0,79}$/u.test(value.version) ||
@@ -70,10 +70,33 @@ function validateModel(value) {
       /[\0-\x1f\x7f]/u.test(value.license) ||
       !Number.isSafeInteger(value.sizeBytes) || value.sizeBytes < 1 ||
       value.sizeBytes > 10 * 1024 * 1024 * 1024 ||
-      typeof value.sha256 !== 'string' || !HASH.test(value.sha256)) {
+      typeof value.sha256 !== 'string' || !HASH.test(value.sha256) ||
+      !Number.isSafeInteger(value.minimumMemoryBytes) || value.minimumMemoryBytes < value.sizeBytes ||
+      value.minimumMemoryBytes > 64 * 1024 * 1024 * 1024) {
     fail('INVALID_CONFIGURATION');
   }
   return Object.freeze({ ...value });
+}
+
+function validateModel(value, requireVoiceConfig = false) {
+  exactObject(value, ['path', 'version', 'license', 'sizeBytes', 'sha256', 'minimumMemoryBytes', 'voiceConfig'],
+    requireVoiceConfig
+      ? ['path', 'version', 'license', 'sizeBytes', 'sha256', 'minimumMemoryBytes', 'voiceConfig']
+      : ['path', 'version', 'license', 'sizeBytes', 'sha256', 'minimumMemoryBytes']);
+  const model = validateArtifact({
+    path: value.path,
+    version: value.version,
+    license: value.license,
+    sizeBytes: value.sizeBytes,
+    sha256: value.sha256,
+    minimumMemoryBytes: value.minimumMemoryBytes,
+  });
+  if (value.voiceConfig !== undefined) {
+    const voiceConfig = validateArtifact(value.voiceConfig);
+    if (voiceConfig.path !== `${model.path}.json`) fail('INVALID_CONFIGURATION');
+    return Object.freeze({ ...model, voiceConfig });
+  }
+  return model;
 }
 
 function validateExecutable(value) {
@@ -105,11 +128,47 @@ function validateSignal(signal) {
   if (signal !== undefined && !(signal instanceof AbortSignal)) fail('INVALID_INPUT');
 }
 
-function validateAudio(value, durationSeconds, limits) {
-  if (!Buffer.isBuffer(value) || value.length < 44 || value.length > limits.maxInputBytes ||
+function parseWav(value, maxBytes) {
+  if (!Buffer.isBuffer(value) || value.length < 44 || value.length > maxBytes ||
       value.toString('ascii', 0, 4) !== 'RIFF' || value.toString('ascii', 8, 12) !== 'WAVE' ||
-      !Number.isFinite(durationSeconds) || durationSeconds <= 0 ||
+      value.readUInt32LE(4) + 8 !== value.length) fail('INVALID_AUDIO');
+  let format;
+  let dataBytes = 0;
+  let offset = 12;
+  while (offset + 8 <= value.length) {
+    const chunkName = value.toString('ascii', offset, offset + 4);
+    const chunkSize = value.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    const end = start + chunkSize;
+    if (end > value.length) fail('INVALID_AUDIO');
+    if (chunkName === 'fmt ' && chunkSize >= 16 && format === undefined) {
+      format = {
+        encoding: value.readUInt16LE(start),
+        channels: value.readUInt16LE(start + 2),
+        sampleRate: value.readUInt32LE(start + 4),
+        blockAlign: value.readUInt16LE(start + 12),
+        bitsPerSample: value.readUInt16LE(start + 14),
+      };
+    } else if (chunkName === 'data') {
+      dataBytes += chunkSize;
+    }
+    offset = end + (chunkSize % 2);
+  }
+  if (offset !== value.length || !format || dataBytes < 1) fail('INVALID_AUDIO');
+  return Object.freeze({ ...format, dataBytes });
+}
+
+function validateAudio(value, durationSeconds, limits) {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 ||
       durationSeconds > limits.maxDurationSeconds) fail('INVALID_AUDIO');
+  const wav = parseWav(value, limits.maxInputBytes);
+  const actualDuration = wav.dataBytes / (wav.sampleRate * wav.channels * wav.bitsPerSample / 8);
+  if (wav.encoding !== 1 || wav.channels !== 1 || wav.sampleRate !== 16000 ||
+      wav.blockAlign !== 2 || wav.bitsPerSample !== 16 ||
+      actualDuration <= 0 || actualDuration > limits.maxDurationSeconds ||
+      Math.abs(actualDuration - durationSeconds) > Math.max(0.1, durationSeconds * 0.01)) {
+    fail('INVALID_AUDIO');
+  }
 }
 
 async function verifyModel(model) {
@@ -252,9 +311,16 @@ function parseWhisperJson(data, durationSeconds, maxTextCodeUnits) {
 }
 
 function validateWav(data, maxOutputBytes) {
-  if (!Buffer.isBuffer(data) || data.length < 44 || data.length > maxOutputBytes ||
-      data.toString('ascii', 0, 4) !== 'RIFF' || data.toString('ascii', 8, 12) !== 'WAVE' ||
-      data.readUInt32LE(4) + 8 > data.length) fail('INVALID_ENGINE_OUTPUT');
+  let wav;
+  try {
+    wav = parseWav(data, maxOutputBytes);
+  } catch {
+    fail('INVALID_ENGINE_OUTPUT');
+  }
+  if (wav.encoding !== 1 || wav.channels !== 1 || wav.bitsPerSample !== 16 ||
+      wav.sampleRate < 8000 || wav.sampleRate > 192000 || wav.blockAlign !== 2) {
+    fail('INVALID_ENGINE_OUTPUT');
+  }
   return data;
 }
 
@@ -267,6 +333,7 @@ function asrEngineMetadata(name, runtimeVersion, model, languages) {
       license: model.license,
       sizeBytes: model.sizeBytes,
       sha256: model.sha256,
+      minimumMemoryBytes: model.minimumMemoryBytes,
     }),
     languages,
     timestamps: true,
@@ -336,7 +403,7 @@ export function createPiperTtsEngine(options) {
       !/^[A-Za-z0-9][A-Za-z0-9.+_-]{0,79}$/u.test(config.runtimeVersion)) {
     fail('INVALID_CONFIGURATION');
   }
-  const model = validateModel(config.model);
+  const model = validateModel(config.model, true);
   const limits = validateLimits(Object.fromEntries(
     Object.entries(config).filter(([key]) => Object.hasOwn(DEFAULTS, key)),
   ));
@@ -348,6 +415,14 @@ export function createPiperTtsEngine(options) {
       license: model.license,
       sizeBytes: model.sizeBytes,
       sha256: model.sha256,
+      minimumMemoryBytes: model.minimumMemoryBytes,
+      voiceConfig: Object.freeze({
+        version: model.voiceConfig.version,
+        license: model.voiceConfig.license,
+        sizeBytes: model.voiceConfig.sizeBytes,
+        sha256: model.voiceConfig.sha256,
+        minimumMemoryBytes: model.voiceConfig.minimumMemoryBytes,
+      }),
     }),
     timestamps: false,
     offline: true,
@@ -366,6 +441,7 @@ export function createPiperTtsEngine(options) {
       if (Buffer.byteLength(input.text, 'utf8') > limits.maxInputBytes) fail('INPUT_LIMIT');
       if (input.signal?.aborted) fail('INTERRUPTED');
       await verifyModel(model);
+      await verifyModel(model.voiceConfig);
       return withTemporaryDirectory(async directory => {
         const outputPath = path.join(directory, 'speech.wav');
         await runProcess(executable, [
@@ -477,7 +553,9 @@ export const localSpeechContract = Object.freeze({
     asr: Object.freeze({ name: 'whisper.cpp', offline: true, cpuSupported: true, timestamps: true }),
     tts: Object.freeze({ name: 'Piper', offline: true, cpuSupported: true, timestamps: false }),
   }),
-  requiredModelMetadata: Object.freeze(['version', 'license', 'sizeBytes', 'sha256']),
+  requiredModelMetadata: Object.freeze([
+    'version', 'license', 'sizeBytes', 'sha256', 'minimumMemoryBytes',
+  ]),
   networkRequired: false,
   defaultEnabled: false,
 });
