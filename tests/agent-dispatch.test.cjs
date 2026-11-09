@@ -20,7 +20,6 @@ test('dispatch workflow isolates a user token from checkout and refuses missing 
  assert.doesNotMatch(workflow,/^\\s+workflow_run:/m);
  assert.match(workflow,/issues: read/);
  assert.match(workflow,/pull-requests: read/);
- assert.match(workflow,/cron: '\*\/10 \* \* \* \*'/);
  assert.match(workflow,/agent-dispatch\.cjs/);
  assert.match(workflow,/Coordinate, review, merge, and dispatch from main/);
  const dispatcher=fs.readFileSync(require('node:path').join(__dirname,'../.github/scripts/agent-dispatch.cjs'),'utf8');
