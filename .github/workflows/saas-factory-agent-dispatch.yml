@@ -1,10 +1,10 @@
 name: SaaS Factory agent dispatch
-# Re-enabled for the explicitly authorized Growth Engine delivery.
+# Full-auto trusted orchestration: scheduled recovery and post-main-CI wakeup.
 # Keep dispatch bounded by the existing coordinator, capacity, and approvals.
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/10 * * * *'
 permissions:
   contents: read
   issues: read
