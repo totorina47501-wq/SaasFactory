@@ -14,13 +14,16 @@ propre schéma PostgreSQL, son pool et son cycle de vie.
 Les migrations immuables sont dans `modules/database/migrations/` et suivent
 `NNNN_<slug>.sql`. La version 1 crée les organisations, utilisateurs,
 appartenances et événements d'audit ; la version 2 ajoute le stockage local,
-l'espace de données namespacé des modules et les règles RLS ; la version 3
-protège les événements d'audit contre `TRUNCATE`. Les tables
+l'espace de données namespacé des modules et les règles RLS. Les tables
 d'appartenance ont des clés étrangères et une clé primaire composite. Les
 emails sont uniques sans distinction de casse dans un schéma. Les événements
-d'audit sont append-only. Le journal de migration stocke version, identifiant
-et SHA-256 ; une migration appliquée modifiée, inconnue ou en échec bloque la
-transaction entière.
+d'audit sont append-only. Les journaux `schema_migrations` du schéma commun et
+`module_migrations` des extensions stockent versions, identifiants et SHA-256.
+Modifier une migration appliquée, omettre une extension déjà migrée ou
+rencontrer une erreur bloque la transaction entière. Les anciennes lignes
+d'extension présentes dans `schema_migrations` sont reconnues par version,
+identifiant et checksum, puis transférées de façon atomique au journal des
+modules.
 
 Chaque déploiement choisit un `schemaName` neuf, en minuscules ASCII et
 distinct des schémas système. Les identifiants sont validés avant leur
@@ -34,11 +37,24 @@ avec champ supplémentaire est refusé avant l'accès à la base.
 RLS protège contre les erreurs d'accès accidentelles, pas contre une injection
 SQL ou un client arbitraire pouvant définir son propre `app.tenant_id`. Le rôle
 runtime doit être un rôle dédié, non propriétaire, non-superuser et sans
-`BYPASSRLS`, avec les seuls droits nécessaires. N'utilisez jamais le rôle de
-migration/propriétaire au runtime. Les migrations d'extension sont fournies
-uniquement comme SQL local statique et relu via `extensionMigrations`, avec des
-versions entières uniques contiguës après le schéma commun ; ne les construisez
-jamais à partir de la configuration utilisateur ou du réseau.
+`BYPASSRLS`, avec les seuls droits nécessaires, sans privilège `TRUNCATE` sur
+`audit_events`. N'utilisez jamais le rôle de migration/propriétaire au runtime.
+Les migrations d'extension sont fournies uniquement comme SQL local statique
+et relu via `extensionMigrations`, avec `{ moduleId, version, id, sql }`.
+Chaque module possède sa séquence d'entiers contigus indépendante, commençant
+à `1` ; deux modules peuvent donc évoluer sans collision avec le schéma commun
+ou entre eux. Pour reprendre l'ancien format sans `moduleId`, conservez sa
+séquence globale commençant après le schéma commun (`3`) ; elle est enregistrée
+sous `legacy-extension`. Ne construisez jamais les migrations à partir de la
+configuration utilisateur ou du réseau.
+
+`targetVersion` borne les migrations du schéma commun ; une cible inférieure à
+la version commune courante n'exécute aucune nouvelle migration d'extension.
+À la cible commune courante, toutes les migrations d'extension fournies sont
+appliquées par défaut. `extensionTargets` peut borner chaque module par son ID
+et sa version maximale (une cible `0` n'en applique aucune) ; une cible
+d'extension non nulle exige que le schéma commun soit à sa version courante.
+Une cible plus basse n'annule jamais une version déjà appliquée.
 
 `seedSynthetic` insère des données fixes et idempotentes (`.invalid`, aucun
 secret). Il ne met jamais à jour ou ne remplace un enregistrement existant.

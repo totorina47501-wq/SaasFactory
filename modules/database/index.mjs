@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs';
 const migrationFiles = [
   { version: 1, id: '0001_identity_audit', url: new URL('./migrations/0001_identity_audit.sql', import.meta.url) },
   { version: 2, id: '0002_tenant_storage', url: new URL('./migrations/0002_tenant_storage.sql', import.meta.url) },
-  { version: 3, id: '0003_audit_truncate_guard', url: new URL('./migrations/0003_audit_truncate_guard.sql', import.meta.url) },
 ];
 const coreMigrations = migrationFiles.map(({ version, id, url }) => Object.freeze({
   version,
@@ -130,23 +129,57 @@ function validateExpectedVersion(version) {
 
 function normalizeMigrations(extensions = []) {
   if (!Array.isArray(extensions) || extensions.length > 128) fail('INVALID_MIGRATIONS');
-  const migrations = [...coreMigrations];
+  const migrations = [];
   for (const migration of extensions) {
-    exactKeys(migration, ['version', 'id', 'sql']);
+    exactKeys(migration, ['moduleId', 'version', 'id', 'sql'], ['version', 'id', 'sql']);
+    const moduleId = migration.moduleId ?? 'legacy-extension';
     if (!Number.isSafeInteger(migration.version) || migration.version < 1 ||
+        typeof moduleId !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/u.test(moduleId) ||
         typeof migration.id !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,62}$/u.test(migration.id) ||
         typeof migration.sql !== 'string' || migration.sql.trim().length === 0 ||
         migration.sql.length > 1_000_000 || migration.sql.includes('\0')) {
       fail('INVALID_MIGRATIONS');
     }
-    migrations.push({ version: migration.version, id: migration.id, sql: migration.sql });
+    migrations.push({ moduleId, version: migration.version, id: migration.id, sql: migration.sql });
   }
-  migrations.sort((left, right) => left.version - right.version);
-  if (migrations.some((migration, index) => migration.version !== index + 1) ||
-      new Set(migrations.map(migration => migration.id)).size !== migrations.length) {
+  const modules = new Map();
+  for (const migration of migrations) {
+    if (!modules.has(migration.moduleId)) modules.set(migration.moduleId, []);
+    modules.get(migration.moduleId).push(migration);
+  }
+  for (const [moduleId, entries] of modules) {
+    entries.sort((left, right) => left.version - right.version);
+    const firstVersion = moduleId === 'legacy-extension' ? 3 : 1;
+    if (entries.some((migration, index) => migration.version !== firstVersion + index) ||
+        new Set(entries.map(migration => migration.id)).size !== entries.length) {
+      fail('INVALID_MIGRATIONS');
+    }
+  }
+  return migrations.sort((left, right) =>
+    left.moduleId < right.moduleId ? -1 : left.moduleId > right.moduleId ? 1 : left.version - right.version);
+}
+
+function normalizeExtensionTargets(targets, extensions) {
+  if (targets === undefined) return undefined;
+  if (targets === null || typeof targets !== 'object' || Array.isArray(targets) ||
+      (Object.getPrototypeOf(targets) !== Object.prototype && Object.getPrototypeOf(targets) !== null)) {
     fail('INVALID_MIGRATIONS');
   }
-  return migrations;
+  const modules = new Map();
+  for (const migration of extensions) {
+    modules.set(migration.moduleId, Math.max(modules.get(migration.moduleId) ?? 0, migration.version));
+  }
+  const result = new Map();
+  for (const key of Reflect.ownKeys(targets)) {
+    const descriptor = Object.getOwnPropertyDescriptor(targets, key);
+    if (typeof key !== 'string' || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value') ||
+        !modules.has(key) || !Number.isSafeInteger(descriptor.value) || descriptor.value < 0 ||
+        descriptor.value > modules.get(key)) {
+      fail('INVALID_MIGRATIONS');
+    }
+    result.set(key, descriptor.value);
+  }
+  return result;
 }
 
 async function transaction(pool, schema, context, operation) {
@@ -182,12 +215,15 @@ async function transaction(pool, schema, context, operation) {
 export async function runMigrations(pool, schemaName, options = {}) {
   validatePool(pool);
   const quotedSchema = validateSchemaName(schemaName);
-  exactKeys(options, ['targetVersion', 'extensionMigrations'], []);
-  const migrations = normalizeMigrations(options.extensionMigrations ?? []);
-  const targetVersion = options.targetVersion ?? migrations.length;
-  if (!Number.isSafeInteger(targetVersion) || targetVersion < 0 || targetVersion > migrations.length) {
+  exactKeys(options, ['targetVersion', 'extensionMigrations', 'extensionTargets'], []);
+  const extensions = normalizeMigrations(options.extensionMigrations ?? []);
+  const targetVersion = options.targetVersion ?? coreMigrations.length;
+  if (!Number.isSafeInteger(targetVersion) || targetVersion < 0 || targetVersion > coreMigrations.length) {
     fail('INVALID_VERSION');
   }
+  const extensionTargets = normalizeExtensionTargets(options.extensionTargets, extensions);
+  if ([...(extensionTargets?.values() ?? [])].some(version => version > 0) &&
+      targetVersion < coreMigrations.length) fail('INVALID_VERSION');
   let client;
   let transactionStarted = false;
   try {
@@ -203,35 +239,102 @@ export async function runMigrations(pool, schemaName, options = {}) {
       checksum text NOT NULL,
       applied_at timestamptz NOT NULL DEFAULT now()
     )`);
-    const appliedResult = await client.query(
+    await client.query(`CREATE TABLE IF NOT EXISTS module_migrations (
+      module_id text NOT NULL,
+      version integer NOT NULL,
+      id text NOT NULL,
+      checksum text NOT NULL,
+      applied_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (module_id, version),
+      UNIQUE (module_id, id)
+    )`);
+    const coreResult = await client.query(
       'SELECT version, id, checksum FROM schema_migrations ORDER BY version',
     );
-    const applied = new Map((appliedResult.rows ?? []).map(row => [Number(row.version), row]));
-    for (const [version, row] of applied) {
-      const migration = migrations[version - 1];
+    const appliedCore = new Map((coreResult.rows ?? []).map(row => [Number(row.version), row]));
+    const moduleResult = await client.query(
+      'SELECT module_id, version, id, checksum FROM module_migrations ORDER BY module_id, version',
+    );
+    const appliedModules = new Map((moduleResult.rows ?? []).map(row =>
+      [`${row.module_id}:${Number(row.version)}`, row]));
+    for (const [version, row] of appliedCore) {
+      const coreMigration = coreMigrations[version - 1];
+      if (coreMigration?.id === row.id &&
+          createHash('sha256').update(coreMigration.sql).digest('hex') === row.checksum) continue;
+      const extension = extensions.find(migration => migration.version === version && migration.id === row.id);
+      if (!extension || createHash('sha256').update(extension.sql).digest('hex') !== row.checksum) {
+        fail('MIGRATION_HISTORY_MISMATCH');
+      }
+      await client.query(
+        'INSERT INTO module_migrations (module_id, version, id, checksum) VALUES ($1, $2, $3, $4)',
+        [extension.moduleId, extension.version, extension.id, row.checksum],
+      );
+      await client.query('DELETE FROM schema_migrations WHERE version = $1 AND id = $2', [version, row.id]);
+      appliedModules.set(`${extension.moduleId}:${extension.version}`, {
+        ...row,
+        module_id: extension.moduleId,
+      });
+      appliedCore.delete(version);
+    }
+    for (const [key, row] of appliedModules) {
+      const [moduleId, version] = key.split(':');
+      const migration = extensions.find(entry => entry.moduleId === moduleId && entry.version === Number(version));
       if (!migration || migration.id !== row.id ||
           createHash('sha256').update(migration.sql).digest('hex') !== row.checksum) {
         fail('MIGRATION_HISTORY_MISMATCH');
       }
     }
-    for (const migration of migrations) {
-      if (migration.version > targetVersion || applied.has(migration.version)) continue;
+    for (const migration of coreMigrations) {
+      if (migration.version > targetVersion || appliedCore.has(migration.version)) continue;
       const checksum = createHash('sha256').update(migration.sql).digest('hex');
       await client.query(migration.sql);
       await client.query(
         'INSERT INTO schema_migrations (version, id, checksum) VALUES ($1, $2, $3)',
         [migration.version, migration.id, checksum],
       );
-      applied.set(migration.version, {
+      appliedCore.set(migration.version, {
+        version: migration.version,
+        id: migration.id,
+        checksum,
+      });
+    }
+    for (const migration of extensions) {
+      const key = `${migration.moduleId}:${migration.version}`;
+      if (appliedModules.has(key)) continue;
+      const target = extensionTargets
+        ? extensionTargets.get(migration.moduleId) ?? 0
+        : targetVersion === coreMigrations.length
+          ? Math.max(...extensions
+            .filter(entry => entry.moduleId === migration.moduleId)
+            .map(entry => entry.version))
+          : 0;
+      if (migration.version > target) continue;
+      const checksum = createHash('sha256').update(migration.sql).digest('hex');
+      await client.query(migration.sql);
+      await client.query(
+        'INSERT INTO module_migrations (module_id, version, id, checksum) VALUES ($1, $2, $3, $4)',
+        [migration.moduleId, migration.version, migration.id, checksum],
+      );
+      appliedModules.set(key, {
+        module_id: migration.moduleId,
         version: migration.version,
         id: migration.id,
         checksum,
       });
     }
     await client.query('COMMIT');
-    return Object.freeze(migrations
-      .filter(migration => applied.has(migration.version))
-      .map(migration => Object.freeze({ version: migration.version, id: migration.id })));
+    return Object.freeze([
+      ...coreMigrations
+        .filter(migration => appliedCore.has(migration.version))
+        .map(migration => Object.freeze({ version: migration.version, id: migration.id })),
+      ...extensions
+        .filter(migration => appliedModules.has(`${migration.moduleId}:${migration.version}`))
+        .map(migration => Object.freeze({
+          moduleId: migration.moduleId,
+          version: migration.version,
+          id: migration.id,
+        })),
+    ]);
   } catch (error) {
     if (transactionStarted) {
       try {
