@@ -1,6 +1,9 @@
 name: SaaS Factory CI
+# Deterministic CI only: no Copilot review or paid AI agents are invoked here.
 on:
+  workflow_dispatch:
   pull_request:
+    branches: [main]
   push:
     branches: [main]
 permissions:
@@ -19,10 +22,14 @@ jobs:
           node-version: '22'
       - name: Test versioned SaaS intake handoff offline
         run: node --test tests/intake.test.mjs
+      - name: Test runtime module contracts offline
+        run: node --test tests/runtime-contracts.test.mjs
       - name: Test standalone generator offline
         run: npm test
       - name: Test agent dispatch policy offline
         run: node --test tests/agent-dispatch.test.cjs
+      - name: Test one final Copilot review offline
+        run: node --test tests/final-review-once.test.mjs
       - name: Test bounded CI recovery policy offline
         run: node --test tests/agent-ci-recovery.test.cjs
       - name: Test read-only operations report offline
