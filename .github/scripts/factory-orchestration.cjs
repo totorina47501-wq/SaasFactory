@@ -446,6 +446,27 @@ async function trustedCi(github, owner, repo, workflow, sha, number) {
     newestAttempt.status === 'completed' && newestAttempt.conclusion === 'success';
 }
 
+async function trustedFreeReview(github, owner, repo, workflow, sha, number) {
+  const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+    owner, repo, workflow_id: workflow.id, head_sha: sha, event: 'pull_request', per_page: 100
+  });
+  const relevant = runs.filter(run => run.workflow_id === workflow.id && run.head_sha === sha &&
+    run.event === 'pull_request' && run.repository?.full_name === REPOSITORY &&
+    run.head_repository?.full_name === REPOSITORY &&
+    Array.isArray(run.pull_requests) && run.pull_requests.length === 1 &&
+    run.pull_requests[0]?.number === number);
+  relevant.sort((a,b) => Date.parse(b.created_at)-Date.parse(a.created_at) || b.id-a.id);
+  const newest = relevant[0];
+  if (!newest || newest.status !== 'completed' || newest.conclusion !== 'success' ||
+    !Number.isSafeInteger(newest.id) || !Number.isSafeInteger(newest.run_attempt)) return false;
+  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+    owner, repo, run_id: newest.id, filter: 'latest', per_page: 100
+  });
+  return Array.isArray(jobs) && jobs.some(job => job.name === 'Free deterministic PR review' &&
+    job.status === 'completed' && job.conclusion === 'success' && job.run_id === newest.id &&
+    job.head_sha === sha);
+}
+
 function pendingAutomatedReview(requested) {
   // Owner notification requests are not branch-protection approvals. GitHub
   // enforces required reviews; the catalog owner authorized automated review.
@@ -517,20 +538,11 @@ async function trustedReview({github, owner, repo, pr, changedFiles, headSha}) {
   if (!evidence.closingVerified || evidence.threads.some(thread => thread.isResolved !== true)) return false;
   if (hasChangeRequest(reviews)) return false;
 
-  const finalReview = reviews.filter(review => BOT_REVIEWERS.has(review.user?.login) &&
-    review.commit_id === headSha)
-    .sort((a, b) => String(b.submitted_at || '').localeCompare(String(a.submitted_at || '')) || b.id-a.id)[0];
-  if (!finalReview || finalReview.state !== 'COMMENTED' || typeof finalReview.body !== 'string' ||
-    !/\bApproval recommended\b/i.test(finalReview.body) ||
-    !/\bNo open issues\b/i.test(finalReview.body) ||
-    /\b(?:changes recommended|needs a closer look|human review|request changes)\b/i.test(finalReview.body)) return false;
-  if (/could(?:n.t| not).*review|(?:wasn.t|was not) able to review|no files (?:were )?reviewed/i.test(finalReview.body)) return false;
-  const examined = reviewFiles(finalReview.body);
-  const hasTable = /^\|\s*File\s*\|/im.test(finalReview.body);
-  // A final, authenticated positive verdict is the provider's attestation.
-  // Its incremental clean-review format often omits tables and inline comments.
-  const attestedCleanFormat = /<!-- ccr-overview-v2 -->/.test(finalReview.body) && /^### .*Approval recommended/im.test(finalReview.body);
-  return changedFiles.length > 0 && (hasTable ? changedFiles.every(file => examined.has(file)) : attestedCleanFormat);
+  // Paid Copilot PR reviews are intentionally not required. A successful
+  // authenticated CI run and its free-review job are checked separately.
+  // Keep all closing-issue, unresolved-thread and CHANGES_REQUESTED gates.
+  return changedFiles.length > 0 && /^[0-9a-f]{40}$/i.test(headSha);
+
 }
 
 async function mergeEligiblePullRequest({
@@ -563,7 +575,8 @@ async function mergeEligiblePullRequest({
   const scopeFiles = [...new Set(files.flatMap(file =>
     [file.filename, file.previous_filename].filter(Boolean)))];
   if (!scopeFiles.length || scopeFiles.some(file => !pathAllowed(file, task.files))) return false;
-  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha, pr.number)) return false;
+  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha, pr.number) ||
+    !await trustedFreeReview(github, owner, repo, workflow, pr.head.sha, pr.number)) return false;
   if (!await trustedReview({github, owner, repo, pr, changedFiles: reviewedFiles, headSha: pr.head.sha})) return false;
 
   const [latest, main, latestIssue, currentPrs] = await Promise.all([
@@ -626,7 +639,8 @@ async function mergeEligiblePullRequest({
   }) || !await trustedReview({
     github, owner, repo, pr: finalPr.data, changedFiles: reviewedFiles, headSha: pr.head.sha
   })) return false;
-  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha, pr.number)) return false;
+  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha, pr.number) ||
+    !await trustedFreeReview(github, owner, repo, workflow, pr.head.sha, pr.number)) return false;
   const result = await github.rest.pulls.merge({
     owner, repo, pull_number: pr.number, merge_method: 'merge', sha: pr.head.sha
   });
