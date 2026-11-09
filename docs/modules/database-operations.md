@@ -1,6 +1,6 @@
 # Opérations PostgreSQL locales — contrat v1
 
-**Module :** `database-operations@1.0.0` · **Contrat :** `1`  
+**Module :** `database-operations@1.0.0` · **Contrat :** `1`
 **API :** `createBackup`, `restoreBackup` · **Format :** archive PostgreSQL custom, avec manifeste JSON versionné.
 
 Le module utilise les outils PostgreSQL locaux `psql`, `pg_dump`, `createdb` et
