@@ -349,9 +349,17 @@ test('publishes stable routes and accessible component, theme, and responsive na
   const shell = readFileSync(`${modulePath}/components/app-shell.tsx`, 'utf8');
   const dashboard = readFileSync(`${modulePath}/components/dashboard.tsx`, 'utf8');
   const theme = readFileSync(`${modulePath}/components/theme-toggle.tsx`, 'utf8');
+  const themeContract = readFileSync(`${modulePath}/theme.ts`, 'utf8');
   const css = readFileSync(`${modulePath}/design-system.css`, 'utf8');
 
-  for (const route of ['/dashboard', '/login', '/signup', '/reset-password', '/settings']) {
+  for (const route of [
+    '/dashboard',
+    '/login',
+    '/signup',
+    '/reset-password',
+    '/reset-password/complete',
+    '/settings',
+  ]) {
     assert.ok(routes.includes(`"${route}"`));
   }
   for (const component of [
@@ -363,15 +371,22 @@ test('publishes stable routes and accessible component, theme, and responsive na
   ]) {
     assert.ok(forms.includes(`function ${component}`));
   }
-  assert.match(forms, /<label htmlFor="login-email">/u);
-  assert.match(forms, /id="login-email" name="email"/u);
+  const formFields = [...forms.matchAll(/<(?:input|select)\b[\s\S]*?\/?>/gu)]
+    .map(([field]) => field);
+  const fieldIds = formFields.map(field => field.match(/\bid="([^"]+)"/u)?.[1]).filter(Boolean);
+  const labelIds = [...forms.matchAll(/<label htmlFor="([^"]+)">/gu)].map(([, id]) => id);
+  assert.ok(fieldIds.length > 0);
+  assert.deepEqual([...fieldIds].sort(), [...labelIds].sort());
   assert.match(forms, /role=\{state\.status === "error" \? "alert" : "status"\}/u);
   assert.match(forms, /aria-live="polite"/u);
   assert.match(forms, /aria-busy=\{pending\}/u);
   assert.match(settings, /<legend>Préférences d’affichage<\/legend>/u);
   assert.match(settings, /defaultValue=\{initialPreferences\.theme\}/u);
-  assert.match(settings, /root\.dataset\.theme = theme/u);
+  assert.match(settings, /applyThemePreference\(theme\)/u);
   assert.match(settings, /root\.dataset\.density = density/u);
+  assert.match(theme, /window\.addEventListener\(THEME_CHANGE_EVENT, syncTheme\)/u);
+  assert.match(themeContract, /window\.dispatchEvent\(new CustomEvent\(THEME_CHANGE_EVENT\)\)/u);
+  assert.match(themeContract, /document\.documentElement\.dataset\.theme = theme/u);
   assert.match(navigation, /aria-expanded=\{open\}/u);
   assert.match(navigation, /aria-controls="ux-mobile-menu"/u);
   assert.match(navigation, /event\.key !== "Escape"/u);

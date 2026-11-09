@@ -4,7 +4,7 @@
 
 Ce module fournit des composants neutres pour une application indépendante Next.js App Router, un contrat de routes et un adaptateur vers le service d'authentification locale de `modules/auth/`. Il n'ajoute pas de dépendance au dépôt Factory, ne crée pas les pages de l'application générée, et n'active aucun fournisseur distant. Importer explicitement les composants dans le projet généré et charger `design-system.css` depuis son point d'entrée.
 
-Routes contractuelles : `/dashboard`, `/login`, `/signup`, `/reset-password` et `/settings`. L'application consommatrice doit créer ses pages App Router et y fournir les actions serveur correspondantes. Les composants n'inventent aucun utilisateur, rôle ou résultat d'authentification.
+Routes contractuelles : `/dashboard`, `/login`, `/signup`, `/reset-password`, `/reset-password/complete` et `/settings`. L'application consommatrice doit créer ses pages App Router et y fournir les actions serveur correspondantes. Les composants n'inventent aucun utilisateur, rôle ou résultat d'authentification.
 
 Les pages `/dashboard` et `/settings` doivent être protégées côté serveur. La page des paramètres appelle `createUxSettingsActions(...).load()` et redirige vers `/login` si le résultat vaut `null`; elle ne doit pas accepter un utilisateur ou un rôle passé par le navigateur. Les routes de formulaire sont des composants et contrats à raccorder dans l'application générée, pas des pages générées automatiquement par ce module.
 

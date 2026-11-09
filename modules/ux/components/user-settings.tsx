@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect, useRef } from "react";
 import type { AuthActionState, AuthFormAction, UserPreferences } from "../types";
+import { applyThemePreference } from "../theme";
 
 const initialState: AuthActionState = { status: "idle", message: "" };
 
@@ -18,19 +19,7 @@ export function UserSettings({
   useEffect(() => {
     const root = document.documentElement;
     root.dataset.density = initialPreferences.density;
-    if (initialPreferences.theme === "system") {
-      delete root.dataset.theme;
-      try {
-        window.localStorage.removeItem("saas-factory-theme");
-      } catch {
-      }
-    } else {
-      root.dataset.theme = initialPreferences.theme;
-      try {
-        window.localStorage.setItem("saas-factory-theme", initialPreferences.theme);
-      } catch {
-      }
-    }
+    applyThemePreference(initialPreferences.theme);
   }, [initialPreferences]);
 
   useEffect(() => {
@@ -39,19 +28,7 @@ export function UserSettings({
     const theme = values.get("theme");
     const density = values.get("density");
     const root = document.documentElement;
-    if (theme === "system") {
-      delete root.dataset.theme;
-      try {
-        window.localStorage.removeItem("saas-factory-theme");
-      } catch {
-      }
-    } else if (theme === "light" || theme === "dark") {
-      root.dataset.theme = theme;
-      try {
-        window.localStorage.setItem("saas-factory-theme", theme);
-      } catch {
-      }
-    }
+    if (theme === "system" || theme === "light" || theme === "dark") applyThemePreference(theme);
     if (density === "comfortable" || density === "compact") {
       root.dataset.density = density;
     }

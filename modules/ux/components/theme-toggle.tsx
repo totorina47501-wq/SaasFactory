@@ -1,35 +1,36 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
-type Theme = "light" | "dark";
+import {
+  applyThemePreference,
+  getActiveTheme,
+  THEME_CHANGE_EVENT,
+  type ActiveTheme,
+} from "../theme";
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("light");
+  const [theme, setTheme] = useState<ActiveTheme>("light");
 
   useEffect(() => {
     try {
       const savedTheme = window.localStorage.getItem("saas-factory-theme");
       if (savedTheme === "light" || savedTheme === "dark") {
-        document.documentElement.dataset.theme = savedTheme;
+        applyThemePreference(savedTheme);
         setTheme(savedTheme);
-        return;
+      } else {
+        setTheme(getActiveTheme());
       }
     } catch {
-      setTheme(window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-      return;
+      setTheme(getActiveTheme());
     }
-    setTheme(window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const syncTheme = () => setTheme(getActiveTheme());
+    window.addEventListener(THEME_CHANGE_EVENT, syncTheme);
+    return () => window.removeEventListener(THEME_CHANGE_EVENT, syncTheme);
   }, []);
 
   function toggleTheme() {
-    const nextTheme = theme === "light" ? "dark" : "light";
-    document.documentElement.dataset.theme = nextTheme;
-    try {
-      window.localStorage.setItem("saas-factory-theme", nextTheme);
-    } catch {
-      // The current page theme still changes when storage is unavailable.
-    }
+    const nextTheme = getActiveTheme() === "light" ? "dark" : "light";
+    applyThemePreference(nextTheme);
     setTheme(nextTheme);
   }
 
