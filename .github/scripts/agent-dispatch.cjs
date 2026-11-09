@@ -77,7 +77,7 @@ module.exports = async ({github, context, core, fs, orchestration = factoryOrche
       }
     }
     // Explicit specialist selection: no semantic guess or silent generic Copilot fallback.
-    const allowedRoles=new Set(["product-architect","generator-engineer","qa-engineer","security-engineer","platform-engineer","ux-accessibility","documentation-release"]);
+    const allowedRoles=new Set(["product-architect","generator-engineer","qa-engineer","security-engineer","platform-engineer","ux-accessibility","documentation-release","growth-intelligence"]);
     const roleLabels=issue.labels.map(l=>typeof l==='string'?l:l.name).filter(name=>name.startsWith('agent:role:'));
     if(roleLabels.length!==1 || !allowedRoles.has(roleLabels[0].slice('agent:role:'.length))){
       report.decision='blocked:invalid-specialist-role';

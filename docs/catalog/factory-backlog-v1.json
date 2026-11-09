@@ -834,7 +834,7 @@
       "issue": 41,
       "title": "Analytics produit respectueux de la confidentialité",
       "role": "generator-engineer",
-      "priority": "p2",
+      "priority": "p1",
       "automationAuthorized": true,
       "files": [
         "modules/analytics/",
@@ -1512,8 +1512,8 @@
       "key": "SFV3-AUTOGROWTH",
       "issue": 71,
       "title": "Autonomous Growth Pilot — recommandations et budgets maîtrisés",
-      "role": "product-architect",
-      "priority": "p2",
+      "role": "growth-intelligence",
+      "priority": "p1",
       "automationAuthorized": true,
       "files": [
         "growth/autonomous/",

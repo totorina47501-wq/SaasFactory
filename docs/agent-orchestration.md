@@ -25,6 +25,7 @@ The approved mission must carry **one and only one** `agent:role:<slug>` label, 
 | `agent:role:platform-engineer` | `.github/agents/platform-engineer.agent.md` | GitHub Actions, Copilot dispatcher, Projects V2, observability and rollback |
 | `agent:role:ux-accessibility` | `.github/agents/ux-accessibility.agent.md` | Accessible design of generated SaaS starter experience and mobile navigation |
 | `agent:role:documentation-release` | `.github/agents/documentation-release.agent.md` | Versioned technical documentation, release notes, decision records and handover |
+| `agent:role:growth-intelligence` | `.github/agents/growth-intelligence.agent.md` | Community announcement drafts, privacy-safe feedback synthesis, evidence-backed improvement proposals; no external posting or scraping |
 
 GitHub cloud agent accepts `agent_assignment.custom_agent` in its API (public preview). The dispatcher sends the profile filename without `.agent.md`. A green local test verifies routing code, **not** availability of the GitHub service, entitlement or successful live Copilot assignment. Do not add broader tokens to work around failures. The available custom profiles are discovered when merged to the default branch. Never move a mission to the `Assigned` state until GitHub read-back confirms the actual Copilot assignee.
 
@@ -98,3 +99,10 @@ Merged dependency proof also requires canonical GitHub closing-issue relationshi
 - Le rapport du coordinateur conserve maintenant `orchestration.waiting` avec des raisons sans données sensibles : `dependencies-unverified`, `issue-authorization-unverified`, `copilot-session-unverified`, `scope-or-files-unverified`, `ci-or-review-evidence-unverified`, etc. Un workflow vert avec `decision: idle` et une entrée `waiting` n'est **pas** une preuve de full auto.
 - Aucune requête de revue IA payante n'est réactivée. Les protections de branche et l'exigence de CI sont conservées ; en cas d'échec ou de preuve incomplète, rester bloqué et afficher la raison plutôt que forcer la fusion.
 - La cadence de secours est `*/10`. Les événements `schedule` doivent être observés en production : l'absence de runs planifiés malgré un workflow défini exige une vérification par le propriétaire de l'activation du workflow GitHub Actions.
+
+
+## Task Force — accélération progressive et priorité Growth
+
+La phase 1 autorise **quatre missions maximum**, une affectation par passage, sans changement des protections. Une huitième spécialité `growth-intelligence` est sélectionnable uniquement pour les missions du catalogue ayant le rôle exact, le label `agent:role:growth-intelligence` et `agent:approved` après toutes les dépendances. Ce profil n'est pas un huitième slot simultané.
+
+L'Analytics #41 et le pilote Growth #71 sont élevés de P2 à P1 dans le catalogue. **Ne pas promouvoir** #71 avant #64/#65/#66/#70 et leurs prérequis, ni #41 avant #31/#35 et leurs dépendances. Le sous-lot Growth MVP offline existant ne doit pas être refait. Les 6 missions simultanées sont une **phase 2 distincte**, conditionnée à des preuves de quotas/crédits, stabilité des CI, absence de chevauchement et tests de capacité ; jamais une valeur implicite par le nombre de profils.
