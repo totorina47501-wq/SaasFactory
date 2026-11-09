@@ -7,6 +7,7 @@ import {
   RagSearchError,
   ragSearchContract,
 } from '../modules/rag-search/index.mjs';
+import { createRagIngestionService } from '../modules/rag-ingestion/index.mjs';
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
 const TENANT_B = '22222222-2222-4222-8222-222222222222';
@@ -76,7 +77,7 @@ function createHarness({ embedder, limits, authorizeDocument } = {}) {
     authorizeDocument: authorizeDocument ?? (async ({ cookieHeader, document: record }) =>
       record.acl.readerIds.includes(cookieHeader === 'alice' ? ALICE : BOB)),
   });
-  return { service, values };
+  return { service, values, store, tenancy };
 }
 
 function indexInput(doc, options = {}) {
@@ -144,6 +145,31 @@ test('preserves source chunk text and offsets while normalizing ranking tokens',
   assert.equal(result.results[0].text, sourceText);
   assert.equal(result.results[0].citation.startOffset, 0);
   assert.equal(result.results[0].citation.endOffset, sourceText.length);
+});
+
+test('indexes a real local ingestion result and searches its verified source offsets', async () => {
+  const { service, store, tenancy } = createHarness();
+  const ingestion = createRagIngestionService({ tenancy, store });
+  const source = await ingestion.ingest({
+    cookieHeader: 'alice',
+    tenantId: TENANT_A,
+    requestId: REQUEST_ID,
+    sourceId: 'integrated-guide',
+    fileName: 'access-guide.txt',
+    format: 'txt',
+    data: Buffer.from('Local access control uses verified memberships.'),
+  });
+  await service.indexDocument(indexInput(source));
+  const result = await service.search(searchInput({
+    query: 'access control verified memberships',
+    mode: 'lexical',
+  }));
+  assert.equal(result.results[0].citation.documentId, source.id);
+  assert.equal(result.results[0].citation.sha256, source.sha256);
+  assert.equal(source.text.slice(
+    result.results[0].citation.startOffset,
+    result.results[0].citation.endOffset,
+  ), result.results[0].text);
 });
 
 test('applies document ACLs and tenant isolation before returning search results', async () => {
@@ -254,6 +280,9 @@ test('returns no matches for irrelevant queries and rejects malformed inputs or 
   assert.deepEqual((await harness.service.search(searchInput({
     query: 'quantum zebra',
     mode: 'lexical',
+  }))).results, []);
+  assert.deepEqual((await harness.service.search(searchInput({
+    query: 'quantum zebra',
   }))).results, []);
   await expectCode(harness.service.search(searchInput({ surprise: true })), 'INVALID_INPUT');
   await expectCode(harness.service.search(searchInput({ tenantId: TENANT_B, query: 'x' })),
