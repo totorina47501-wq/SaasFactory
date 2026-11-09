@@ -26,7 +26,7 @@ const STORE_METHODS = [
   'findUserByEmail',
   'findUserById',
   'createUser',
-  'createSession',
+  'createSessionIfPasswordHashMatches',
   'findSessionByTokenHash',
   'deleteSessionByTokenHash',
   'rotateSession',
@@ -297,7 +297,7 @@ export function createAuthService(options) {
     return validToken(csrfToken) && sameDigest(csrfToken, session.csrfHash);
   }
 
-  async function createSession(userId) {
+  async function createSession(userId, expectedPasswordHash) {
     const sessionToken = token();
     const csrfToken = token();
     const now = validateNow(clock);
@@ -307,7 +307,12 @@ export function createAuthService(options) {
       createdAt: now,
       expiresAt: now + SESSION_TTL_MS,
     };
-    await store.createSession({ tokenHash: digest(sessionToken), ...session });
+    const created = await store.createSessionIfPasswordHashMatches(
+      { tokenHash: digest(sessionToken), ...session },
+      expectedPasswordHash,
+    );
+    if (typeof created !== 'boolean') fail('UNAVAILABLE');
+    if (!created) fail('AUTHENTICATION_FAILED');
     return {
       csrfToken,
       setCookie: sessionCookie(sessionToken, secure, SESSION_TTL_MS / 1000),
@@ -351,7 +356,7 @@ export function createAuthService(options) {
         if (user !== null) validateUser(user);
         const valid = await verifyPassword(password, user?.passwordHash);
         if (!user || !valid) fail('AUTHENTICATION_FAILED');
-        const session = await createSession(user.id);
+        const session = await createSession(user.id, user.passwordHash);
         return Object.freeze({
           user: toPublicUser(user),
           csrfToken: session.csrfToken,

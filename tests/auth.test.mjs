@@ -19,6 +19,7 @@ function fakeStore() {
     resets: new Map(),
     limits: new Map(),
     failUserLookup: false,
+    beforeCreateSession: null,
   };
   const store = {
     async findUserByEmail(email) {
@@ -35,8 +36,12 @@ function fakeStore() {
       state.users.set(user.email, { ...user });
       return true;
     },
-    async createSession(session) {
+    async createSessionIfPasswordHashMatches(session, expectedPasswordHash) {
+      if (state.beforeCreateSession) await state.beforeCreateSession();
+      const user = [...state.users.values()].find(item => item.id === session.userId);
+      if (!user || user.passwordHash !== expectedPasswordHash) return false;
       state.sessions.set(session.tokenHash, { ...session });
+      return true;
     },
     async findSessionByTokenHash(tokenHash) {
       const session = state.sessions.get(tokenHash);
@@ -288,6 +293,32 @@ test('local password reset hides tokens, expires, is one-use, and revokes all se
   })));
 });
 
+test('a concurrent password reset cannot create a session from the old password', async () => {
+  const ctx = createService();
+  await ctx.service.register(credentials());
+  await ctx.service.requestPasswordReset({
+    email: 'member@example.test',
+    origin,
+    rateLimitActor: actor,
+  });
+  let resetDuringLogin = true;
+  ctx.state.beforeCreateSession = async () => {
+    if (!resetDuringLogin) return;
+    resetDuringLogin = false;
+    await ctx.service.completePasswordReset({
+      token: ctx.outbox[0].token,
+      newPassword: 'new correct horse password',
+      origin,
+      rateLimitActor: actor,
+    });
+  };
+  await expectAuthCode(() => ctx.service.login(credentials()), 'AUTHENTICATION_FAILED');
+  assert.equal(ctx.state.sessions.size, 0);
+  assert.ok(await ctx.service.login(credentials('member@example.test', {
+    password: 'new correct horse password',
+  })));
+});
+
 test('rate limits repeated login guesses and reset delivery without revealing account state', async () => {
   const ctx = createService();
   await ctx.service.register(credentials());
@@ -362,12 +393,19 @@ test('rejects hostile inputs, duplicate cookies, insecure production origins, an
 
 test('PostgreSQL store uses fixed schema identifiers, bound values, and atomic reset/session operations', async () => {
   const calls = [];
+  let currentPasswordHash = 'old-password-hash';
   const pool = {
     async connect() {
       return {
         async query(sql, parameters = []) {
           calls.push({ sql, parameters });
           if (sql.includes('RETURNING attempts <= $2 AS allowed')) return { rows: [{ allowed: true }] };
+          if (sql.includes('SELECT password_hash') && sql.includes('FOR UPDATE')) {
+            return { rows: [{ password_hash: currentPasswordHash }] };
+          }
+          if (sql.includes('SELECT id FROM "app_auth".auth_users') && sql.includes('FOR UPDATE')) {
+            return { rows: [{ id: 'user-id' }] };
+          }
           if (sql.includes('DELETE FROM "app_auth".auth_sessions') && sql.includes('RETURNING user_id')) {
             return { rows: [{ user_id: 'user-id' }] };
           }
@@ -375,7 +413,7 @@ test('PostgreSQL store uses fixed schema identifiers, bound values, and atomic r
             return { rows: [{ user_id: 'user-id' }] };
           }
           if (sql.includes('UPDATE "app_auth".auth_users')) return { rows: [{ id: 'user-id' }] };
-          return { rows: [] };
+          return { rows: [], rowCount: 0 };
         },
         release() {},
       };
@@ -383,6 +421,17 @@ test('PostgreSQL store uses fixed schema identifiers, bound values, and atomic r
   };
   const store = createPostgresAuthStore({ pool, schemaName: 'app_auth' });
   assert.equal(await store.consumeRateLimit('hashed-bucket', 8, 900_000, 1_000), true);
+  assert.equal(await store.purgeExpiredAuthData(1_000), 0);
+  const session = {
+    tokenHash: 'new-session-hash',
+    userId: 'user-id',
+    csrfHash: 'csrf-hash',
+    createdAt: 1_000,
+    expiresAt: 43_201_000,
+  };
+  assert.equal(await store.createSessionIfPasswordHashMatches(session, 'old-password-hash'), true);
+  currentPasswordHash = 'new-password-hash';
+  assert.equal(await store.createSessionIfPasswordHashMatches(session, 'old-password-hash'), false);
   assert.equal(await store.rotateSession('old-hash', {
     tokenHash: 'new-hash',
     userId: 'user-id',
@@ -397,7 +446,10 @@ test('PostgreSQL store uses fixed schema identifiers, bound values, and atomic r
   }), true);
   assert.ok(calls.every(call => call.sql.includes('"app_auth"') || ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(call.sql)));
   assert.ok(calls.some(call => call.parameters.includes('hashed-bucket')));
+  assert.ok(calls.some(call => call.sql.includes('FOR UPDATE')));
   assert.ok(calls.some(call => call.sql === 'COMMIT'));
+  assert.ok(calls.some(call => call.sql === 'ROLLBACK'));
+  assert.ok(calls.some(call => call.sql.includes('auth_sessions WHERE expires_at <=')));
   assert.throws(() => createPostgresAuthStore({ pool, schemaName: 'app"; DROP SCHEMA public;--' }), TypeError);
   assert.throws(() => createPostgresAuthStore({
     pool,

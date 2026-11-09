@@ -69,10 +69,15 @@ Le schéma est validé avant interpolation ; toutes les valeurs SQL restent des
 paramètres liés. `runAuthMigrations(pool, schemaName)` s'appuie sur le module
 database v1 : il exécute ses migrations communes et ajoute la migration
 immuable `auth@1.0.0` avec contraintes d'unicité d'email, références, indexes,
-empreintes de tokens et compteurs. Les opérations de rotation et de reset sont
-transactionnelles ; la consommation de jeton est atomique. Le pool doit utiliser
-un rôle runtime dédié aux droits minimaux, et non le rôle de migration ou un
-superuser. Cette migration ajoute uniquement les tables `auth_*` ; elle ne
+empreintes de tokens et compteurs. Les opérations de login, rotation et reset
+sont transactionnelles ; login verrouille le compte et compare de nouveau le
+hash de mot de passe avant de créer la session. La rotation verrouille aussi le
+compte pendant son remplacement. Ainsi, un reset concurrent ne peut pas laisser
+une session issue de l'ancien mot de passe. La consommation de jeton est
+atomique. Les lignes expirées sont supprimées lors des créations et
+`purgeExpiredAuthData(now)` permet un nettoyage périodique explicite. Le pool
+doit utiliser un rôle runtime dédié aux droits minimaux, et non le rôle de
+migration ou un superuser. Cette migration ajoute uniquement les tables `auth_*` ; elle ne
 modifie pas les tables ni les migrations du module database.
 
 Exemple d'intégration dans l'application indépendante (le pilote `pg` doit être
@@ -118,12 +123,17 @@ suivants (les noms de méthodes sont normatifs) :
 | --- | --- |
 | `findUserByEmail(email)` / `findUserById(id)` | Retourne `null` ou `{ id, email, passwordHash }`. |
 | `createUser(user)` | Insert atomique avec email unique insensible à la casse ; retourne un booléen. |
-| `createSession(session)` / `findSessionByTokenHash(hash)` | Persiste la session ; la lecture ne renvoie que `userId`, `csrfHash`, `expiresAt`. |
+| `createSessionIfPasswordHashMatches(session, expectedHash)` / `findSessionByTokenHash(hash)` | Crée une session uniquement si le hash vérifié reste courant, dans la même transaction que le verrouillage du compte ; la lecture ne renvoie que `userId`, `csrfHash`, `expiresAt`. |
 | `deleteSessionByTokenHash(hash)` / `deleteSessionsByUserId(id)` | Révocation effective. |
-| `rotateSession(oldHash, session)` | Remplacement atomique : une seule session reste utilisable. |
+| `rotateSession(oldHash, session)` | Verrouille le compte et remplace atomiquement l'ancienne session ; un reset concurrent révoque aussi la nouvelle session. |
 | `createResetToken(reset)` / `revokeResetToken(hash)` | Persiste / révoque uniquement l'empreinte du jeton. |
 | `completePasswordReset({ tokenHash, passwordHash, now })` | Un unique gagnant consomme le jeton non expiré, change le hash, supprime tous les resets et révoque toutes les sessions, dans une transaction. |
 | `consumeRateLimit(key, limit, windowMs, now)` | Incrémente atomiquement un compteur persistant et retourne le booléen d'autorisation. |
+
+L'adaptateur PostgreSQL expose aussi `purgeExpiredAuthData(now)`. Appelez-le
+périodiquement depuis une maintenance locale de l'application ; les créations
+de session et de reset nettoient également leurs lignes expirées de façon
+opportuniste. Aucun job réseau ou service planifié n'est installé par le module.
 
 Un magasin volatil ou non atomique ne satisfait pas ce contrat. Les tests Factory
 utilisent un magasin local synthétique conservé entre instances de service ;

@@ -56,6 +56,21 @@ export function createPostgresAuthStore(options) {
   const pool = options.pool;
   const schema = quoteSchema(options.schemaName);
 
+  async function purgeExpiredAuthData(now) {
+    if (!Number.isSafeInteger(now) || now < 0) throw new TypeError('Invalid cleanup time.');
+    return withClient(pool, async client => {
+      const sessions = await client.query(
+        `DELETE FROM ${schema}.auth_sessions WHERE expires_at <= to_timestamp($1::double precision / 1000)`,
+        [now],
+      );
+      const resets = await client.query(
+        `DELETE FROM ${schema}.auth_password_resets WHERE expires_at <= to_timestamp($1::double precision / 1000)`,
+        [now],
+      );
+      return (sessions.rowCount ?? 0) + (resets.rowCount ?? 0);
+    });
+  }
+
   return Object.freeze({
     async findUserByEmail(email) {
       return withClient(pool, async client => {
@@ -91,12 +106,31 @@ export function createPostgresAuthStore(options) {
       });
     },
 
-    async createSession(session) {
-      return withClient(pool, client => client.query(
-        `INSERT INTO ${schema}.auth_sessions (token_hash, user_id, csrf_hash, created_at, expires_at)
-         VALUES ($1, $2, $3, to_timestamp($4::double precision / 1000), to_timestamp($5::double precision / 1000))`,
-        [session.tokenHash, session.userId, session.csrfHash, session.createdAt, session.expiresAt],
-      ));
+    async createSessionIfPasswordHashMatches(session, expectedPasswordHash) {
+      await purgeExpiredAuthData(session.createdAt);
+      return withClient(pool, async client => {
+        await client.query('BEGIN');
+        try {
+          const current = await client.query(
+            `SELECT password_hash FROM ${schema}.auth_users WHERE id = $1 FOR UPDATE`,
+            [session.userId],
+          );
+          if (current.rows[0]?.password_hash !== expectedPasswordHash) {
+            await client.query('ROLLBACK');
+            return false;
+          }
+          await client.query(
+            `INSERT INTO ${schema}.auth_sessions (token_hash, user_id, csrf_hash, created_at, expires_at)
+             VALUES ($1, $2, $3, to_timestamp($4::double precision / 1000), to_timestamp($5::double precision / 1000))`,
+            [session.tokenHash, session.userId, session.csrfHash, session.createdAt, session.expiresAt],
+          );
+          await client.query('COMMIT');
+          return true;
+        } catch (error) {
+          await client.query('ROLLBACK');
+          throw error;
+        }
+      });
     },
 
     async findSessionByTokenHash(tokenHash) {
@@ -126,6 +160,14 @@ export function createPostgresAuthStore(options) {
       return withClient(pool, async client => {
         await client.query('BEGIN');
         try {
+          const user = await client.query(
+            `SELECT id FROM ${schema}.auth_users WHERE id = $1 FOR UPDATE`,
+            [session.userId],
+          );
+          if (user.rows.length !== 1) {
+            await client.query('ROLLBACK');
+            return false;
+          }
           const removed = await client.query(
             `DELETE FROM ${schema}.auth_sessions WHERE token_hash = $1 AND user_id = $2 RETURNING user_id`,
             [oldTokenHash, session.userId],
@@ -155,12 +197,22 @@ export function createPostgresAuthStore(options) {
       ));
     },
 
+    async purgeExpiredAuthData(now) {
+      return purgeExpiredAuthData(now);
+    },
+
     async createResetToken(reset) {
-      return withClient(pool, client => client.query(
-        `INSERT INTO ${schema}.auth_password_resets (token_hash, user_id, created_at, expires_at)
-         VALUES ($1, $2, to_timestamp($3::double precision / 1000), to_timestamp($4::double precision / 1000))`,
-        [reset.tokenHash, reset.userId, reset.createdAt, reset.expiresAt],
-      ));
+      return withClient(pool, async client => {
+        await client.query(
+          `DELETE FROM ${schema}.auth_password_resets WHERE expires_at <= to_timestamp($1::double precision / 1000)`,
+          [reset.createdAt],
+        );
+        return client.query(
+          `INSERT INTO ${schema}.auth_password_resets (token_hash, user_id, created_at, expires_at)
+           VALUES ($1, $2, to_timestamp($3::double precision / 1000), to_timestamp($4::double precision / 1000))`,
+          [reset.tokenHash, reset.userId, reset.createdAt, reset.expiresAt],
+        );
+      });
     },
 
     async revokeResetToken(tokenHash) {
