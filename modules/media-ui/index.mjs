@@ -253,8 +253,10 @@ function parseNormalizedWav(value, maxInputBytes) {
   return { data, samples };
 }
 
-export function createWaveform(value, { maxInputBytes = MAX_WAVEFORM_INPUT_BYTES,
-  maxBars = DEFAULT_WAVEFORM_BARS } = {}) {
+export function createWaveform(value, configuration = {}) {
+  exactObject(configuration, ['maxInputBytes', 'maxBars'], []);
+  const maxInputBytes = configuration.maxInputBytes ?? MAX_WAVEFORM_INPUT_BYTES;
+  const maxBars = configuration.maxBars ?? DEFAULT_WAVEFORM_BARS;
   if (!Number.isSafeInteger(maxInputBytes) || maxInputBytes < 44 ||
       maxInputBytes > MAX_WAVEFORM_INPUT_BYTES || !Number.isSafeInteger(maxBars) ||
       maxBars < 1 || maxBars > 128) fail('INVALID_CONFIGURATION');
@@ -302,7 +304,10 @@ export function renderJobProgress(input) {
     return `<li><time datetime="${time.toISOString()}">${time.toISOString()}</time> ${html(event.type)} (attempt ${event.attempt})</li>`;
   }).join('');
   const error = input.status.errorCode
-    ? `<p role="alert">Processing failed: ${html(input.status.errorCode)}</p>`
+    ? typeof input.status.errorCode === 'string' &&
+      /^[A-Z][A-Z0-9_]{0,63}$/u.test(input.status.errorCode)
+      ? `<p role="alert">Processing failed: ${html(input.status.errorCode)}</p>`
+      : fail('INVALID_INPUT')
     : '';
   return `<section aria-label="Media processing progress"><p role="status" aria-live="polite">${html(input.status.label)} ` +
     `(attempt ${input.status.attempt} of ${input.status.maxAttempts})</p>${error}` +

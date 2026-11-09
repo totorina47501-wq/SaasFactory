@@ -144,6 +144,7 @@ test('builds a bounded waveform only from normalized local PCM audio', () => {
   assert.match(renderWaveform(bars), /aria-hidden="true"/u);
   assert.throws(() => createWaveform(Buffer.from('not a wave')), { code: 'INVALID_AUDIO' });
   assert.throws(() => renderWaveform([1.2]), { code: 'INVALID_INPUT' });
+  assert.throws(() => createWaveform(makeWav([0]), { unexpected: true }), { code: 'INVALID_INPUT' });
 });
 
 test('requires explicit consent, enforces upload limits, and forwards only authorized media inputs', async () => {
@@ -230,8 +231,16 @@ test('delegates carousel and tenant-scoped job status/cancellation', async () =>
   await expectCode(fixture.service.carousel({ ...auth, imageIds: Array(21).fill(AUDIO_ID) }), 'INVALID_INPUT');
 });
 
-test('stops and unloads media before a playback deletion action proceeds', () => {
+test('stops and unloads media before an ACL-backed audio deletion proceeds', async () => {
   const calls = [];
+  const fixture = mediaServices({
+    audioOverrides: {
+      async deleteAudio(input) {
+        calls.push(`delete:${input.audioId}`);
+        return { deleted: true };
+      },
+    },
+  });
   const track = { removeAttribute(name) { calls.push(`track:${name}`); } };
   const element = {
     pause() { calls.push('pause'); },
@@ -240,6 +249,7 @@ test('stops and unloads media before a playback deletion action proceeds', () =>
     load() { calls.push('load'); },
   };
   stopMediaPlayback(element);
-  assert.deepEqual(calls, ['pause', 'media:src', 'track:src', 'load']);
+  await fixture.service.deleteAudio({ ...auth, audioId: AUDIO_ID });
+  assert.deepEqual(calls, ['pause', 'media:src', 'track:src', 'load', `delete:${AUDIO_ID}`]);
   assert.throws(() => stopMediaPlayback({}), { code: 'INVALID_INPUT' });
 });
