@@ -16,7 +16,7 @@ test('dispatch workflow isolates a user token from checkout and refuses missing 
  assert.doesNotMatch(workflow,/^\s+pull_request(?:_target)?:/m);
  // Current policy uses scheduled/manual dispatch; the paid review trigger stays paused.
  assert.match(workflow,/workflow_dispatch:/);
- assert.ok(workflow.includes("cron: '*/30 * * * *'"));
+ assert.ok(workflow.includes("cron: '*/10 * * * *'"));
  assert.doesNotMatch(workflow,/^\\s+workflow_run:/m);
  assert.match(workflow,/issues: read/);
  assert.match(workflow,/pull-requests: read/);
@@ -137,7 +137,7 @@ test('review signal has no privileged credentials or untrusted checkout',()=>{
 test('privileged dispatcher only runs trusted scheduled or manual events',()=>{
  const workflow=fs.readFileSync(require('node:path').join(__dirname,'../.github/workflows/saas-factory-agent-dispatch.yml'),'utf8');
  assert.match(workflow,/workflow_dispatch:/);
- assert.match(workflow,/cron: '\*\/30 \* \* \* \*'/);
+ assert.match(workflow,/cron: '\*\/10 \* \* \* \*'/);
  assert.doesNotMatch(workflow,/^  workflow_run:/m);
  assert.doesNotMatch(workflow,/Verify trusted review notification job before privileged dispatch/);
  assert.match(workflow,/github\.repository == 'totorina47501-wq\/SaasFactory'/);
@@ -149,4 +149,20 @@ test('privileged dispatcher only runs trusted scheduled or manual events',()=>{
  assert.equal(check('refs/heads/main','totorina47501-wq/SaasFactory'),true);
  assert.equal(check('refs/pull/2/merge','totorina47501-wq/SaasFactory'),false);
  assert.equal(check('refs/heads/main','other/repo'),false);
+});
+
+test('green main CI wakes dispatcher without exposing write permissions to PR code',()=>{
+ const ci=fs.readFileSync(require('node:path').join(__dirname,'../.github/workflows/ci.yml'),'utf8');
+ assert.match(ci,/^  wake-orchestrator:\s*$/m);
+ const block=ci.slice(ci.indexOf('  wake-orchestrator:'));
+ assert.match(block,/github\.event_name == 'push'/);
+ assert.match(block,/github\.ref == 'refs\/heads\/main'/);
+ assert.match(block,/needs: \[generator, generated-app\]/);
+ assert.match(block,/permissions:\s*\n\s+actions: write\s*\n\s+contents: read/);
+ assert.match(block,/actions\.createWorkflowDispatch/);
+ assert.match(block,/workflow_id: 'saas-factory-agent-dispatch\.yml'/);
+ assert.match(block,/ref: 'main'/);
+ assert.doesNotMatch(ci.slice(0,ci.indexOf('jobs:')),/actions: write/);
+ const review=ci.slice(ci.indexOf('  free-review:'),ci.indexOf('  generator:'));
+ assert.doesNotMatch(review,/actions: write|COPILOT_DISPATCH_TOKEN/);
 });
