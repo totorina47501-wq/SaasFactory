@@ -82,6 +82,9 @@ export function resolveModules(registry, selection) {
   try {
     input = validateRequest(snapshotJson(selection));
   } catch (error) {
+    if (error instanceof ModuleRegistryError && error.code === 'INVALID_INPUT') {
+      fail('INVALID_SELECTION');
+    }
     if (error instanceof ModuleRegistryError) throw error;
     fail('INVALID_SELECTION');
   }
