@@ -236,16 +236,20 @@ function validateIntakeV2(raw) {
     defaultLanguage,
     deploymentTarget: text(scaffold.deploymentTarget, 'scaffold.deploymentTarget', 32),
   };
-  validateConfig({
-    schemaVersion: 1,
-    productName: product.name,
-    projectSlug: product.slug,
-    domain: product.domain,
-    modules: resolved.modules.map(module => module.id),
-    languages,
-    defaultLanguage,
-    deploymentTarget: generatorConfig.deploymentTarget,
-  });
+  try {
+    validateConfig({
+      schemaVersion: 1,
+      productName: product.name,
+      projectSlug: product.slug,
+      domain: product.domain,
+      modules: resolved.modules.map(module => module.id),
+      languages,
+      defaultLanguage,
+      deploymentTarget: generatorConfig.deploymentTarget,
+    });
+  } catch {
+    fail('generator configuration is invalid');
+  }
 
   if (!Array.isArray(raw.mvp) || raw.mvp.length < 1 || raw.mvp.length > 40) {
     fail('mvp must contain 1-40 features');

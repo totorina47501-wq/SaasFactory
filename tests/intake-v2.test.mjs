@@ -138,6 +138,16 @@ test('secret detection and duplicate/unknown field diagnostics never echo input'
   );
   assert.throws(() => compileIntake(duplicateSecretKey), error =>
     error.message === 'Duplicate JSON key' && !error.message.includes(secret));
+
+  const invalidLanguageV2 = structuredClone(v2);
+  invalidLanguageV2.scaffold.languages = ['PRIVATE_SENTINEL!'];
+  assert.throws(() => compile(invalidLanguageV2), error =>
+    !error.message.includes('PRIVATE_SENTINEL!'));
+
+  const invalidLanguageV1 = structuredClone(v1);
+  invalidLanguageV1.scaffold.languages = ['PRIVATE_SENTINEL!'];
+  assert.throws(() => compile(invalidLanguageV1), error =>
+    !error.message.includes('PRIVATE_SENTINEL!'));
 });
 
 test('credential-prefix prose is accepted when it is not token-shaped', () => {

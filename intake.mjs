@@ -69,11 +69,14 @@ function verifyIntake(raw){
  if(!Array.isArray(raw.assumptions)||raw.assumptions.length>20)throw Error('assumptions must be array <=20');
  const assumptions=raw.assumptions.map((a,i)=>string(a,'assumptions['+i+']',300));
  // The generator remains the authority for the scaffold schema and policy.
- const generatorConfig=validateConfig({
-  schemaVersion:1,productName:product.name,projectSlug:product.slug,domain:product.domain,
-  modules:raw.scaffold.modules,languages:raw.scaffold.languages,
-  defaultLanguage:raw.scaffold.defaultLanguage,deploymentTarget:raw.scaffold.deploymentTarget
- });
+ let generatorConfig;
+ try{
+  generatorConfig=validateConfig({
+   schemaVersion:1,productName:product.name,projectSlug:product.slug,domain:product.domain,
+   modules:raw.scaffold.modules,languages:raw.scaffold.languages,
+   defaultLanguage:raw.scaffold.defaultLanguage,deploymentTarget:raw.scaffold.deploymentTarget
+  });
+ }catch{throw Error('generator configuration is invalid')}
  // Do not carry customer details or AI prose into the generated starter.
  return {intakeVersion:1,product,market,mvp,capabilities,assumptions,generatorConfig};
 }
