@@ -4,6 +4,7 @@ import {
   chmod,
   lstat,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   symlink,
@@ -225,6 +226,7 @@ test('enforces tenant quotas, preserves integrity checks, and deletes only autho
       maxTenantFiles: 1,
       maxStorageBytes: 2048,
       maxStorageFiles: 2,
+      maxTemporaryBytes: 1024,
     },
   });
   t.after(fixture.dispose);
@@ -272,14 +274,68 @@ test('cleans cancelled uploads and runs tenant-scoped expiry through the jobs ad
     .readdir(path.join(fixture.directory, 'temporary')), []);
 
   const item = await fixture.service.upload(uploadInput());
+  const otherTenantItem = await fixture.service.upload(uploadInput({
+    ...auth(TENANT_B),
+    fileName: 'other-tenant.png',
+  }));
   now += 1000;
   const runRetention = createStorageRetentionHandler(fixture.service);
+  const otherTenantResult = await runRetention({
+    tenantContext: { contractVersion: 1, tenantId: TENANT_B, requestId: 'request-1' },
+  });
+  assert.equal(otherTenantResult.deletedCount, 1);
+  assert.deepEqual((await fixture.service.list(auth())).map(entry => entry.id), [item.id]);
+  await expectCode(fixture.service.export({ ...auth(TENANT_B), objectId: otherTenantItem.id }), 'NOT_FOUND');
   const result = await runRetention({
     tenantContext: { contractVersion: 1, tenantId: TENANT_A, requestId: 'request-1' },
   });
   assert.equal(result.deletedCount, 1);
   assert.deepEqual(await fixture.service.list(auth()), []);
   await expectCode(fixture.service.export({ ...auth(), objectId: item.id }), 'NOT_FOUND');
+});
+
+test('reserves bounded temporary capacity across concurrent uploads and releases it', async t => {
+  const limits = {
+    maxUploadBytes: 1024,
+    maxTenantBytes: 4096,
+    maxStorageBytes: 4096,
+    maxTemporaryBytes: 1024,
+    maxConcurrentUploads: 1,
+    temporaryTtlMs: 5000,
+    uploadTimeoutMs: 1000,
+  };
+  const fixture = await setup({
+    limits,
+  });
+  t.after(fixture.dispose);
+  const secondService = await createPrivateStorageService({
+    directory: fixture.directory,
+    tenancy: tenancy(),
+    audit: { append: async () => {} },
+    limits,
+  });
+  const source = new PassThrough();
+  const firstUpload = fixture.service.upload(uploadInput({ stream: source }));
+  const temporaryDirectory = path.join(fixture.directory, 'temporary');
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if ((await readdir(temporaryDirectory)).some(name => name.endsWith('.permit'))) break;
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.ok((await readdir(temporaryDirectory)).some(name => name.endsWith('.permit')));
+  await expectCode(secondService.upload(uploadInput()), 'UPLOAD_BUSY');
+
+  source.end(png());
+  const uploaded = await firstUpload;
+  assert.equal(uploaded.deduplicated, false);
+  assert.deepEqual(await readdir(temporaryDirectory), []);
+  await expectCode(secondService.upload(uploadInput({
+    stream: Readable.from(['é'.repeat(600)]),
+  })), 'INVALID_INPUT');
+  assert.deepEqual(await readdir(temporaryDirectory), []);
+  await expectCode(secondService.upload(uploadInput({
+    stream: Readable.from([Buffer.alloc(1025)]),
+  })), 'FILE_TOO_LARGE');
+  assert.deepEqual(await readdir(temporaryDirectory), []);
 });
 
 test('cleans abandoned private temporary and quarantine files without following symlinks', async t => {

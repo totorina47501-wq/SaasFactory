@@ -33,6 +33,8 @@ const DEFAULTS = Object.freeze({
   maxTenantFiles: 1000,
   maxStorageBytes: 1024 * 1024 * 1024,
   maxStorageFiles: 10000,
+  maxTemporaryBytes: 80 * 1024 * 1024,
+  maxConcurrentUploads: 8,
   retentionMs: 30 * 24 * 60 * 60 * 1000,
   temporaryTtlMs: 60 * 60 * 1000,
   quarantineTtlMs: 24 * 60 * 60 * 1000,
@@ -98,16 +100,21 @@ function validateLimits(value = {}) {
     if (!Number.isSafeInteger(number) || number < 1) fail('INVALID_CONFIGURATION');
     const maximum = key === 'maxUploadBytes' ? 20 * 1024 * 1024 :
       key === 'maxTenantBytes' ? 10 * 1024 * 1024 * 1024 :
-        key === 'maxStorageBytes' || key === 'maxQuarantineBytes' ? 100 * 1024 * 1024 * 1024 :
-          key === 'maxTenantFiles' || key === 'maxStorageFiles' || key === 'maxQuarantineFiles' ? 100000 :
-            key === 'retentionMs' || key === 'temporaryTtlMs' || key === 'quarantineTtlMs' ? 365 * 24 * 60 * 60 * 1000 :
-              key === 'uploadTimeoutMs' || key === 'lockWaitMs' ? 60 * 60 * 1000 :
-                64 * 1024 * 1024;
+        key === 'maxStorageBytes' || key === 'maxTemporaryBytes' || key === 'maxQuarantineBytes'
+          ? 100 * 1024 * 1024 * 1024 :
+          key === 'maxTenantFiles' || key === 'maxStorageFiles' || key === 'maxQuarantineFiles'
+            ? 100000 :
+            key === 'maxConcurrentUploads' ? 64 :
+              key === 'retentionMs' || key === 'temporaryTtlMs' || key === 'quarantineTtlMs' ? 365 * 24 * 60 * 60 * 1000 :
+                key === 'uploadTimeoutMs' || key === 'lockWaitMs' ? 60 * 60 * 1000 :
+                  64 * 1024 * 1024;
     if (number > maximum) fail('INVALID_CONFIGURATION');
   }
   if (limits.maxTenantBytes > limits.maxStorageBytes ||
       limits.maxTenantFiles > limits.maxStorageFiles ||
       limits.maxUploadBytes > limits.maxTenantBytes ||
+      limits.maxTemporaryBytes < limits.maxUploadBytes ||
+      limits.maxTemporaryBytes > limits.maxStorageBytes ||
       limits.temporaryTtlMs <= limits.uploadTimeoutMs + 1000) {
     fail('INVALID_CONFIGURATION');
   }
@@ -496,6 +503,101 @@ export async function createPrivateStorageService(options) {
     }
   }
 
+  async function cleanupExpiredReservations(now) {
+    for (const entry of await readdir(temporaryDirectory)) {
+      if (!entry.endsWith('.permit')) continue;
+      const id = entry.slice(0, -'.permit'.length);
+      if (!UUID.test(id)) fail('UNSAFE_STORAGE');
+      const permitPath = path.join(temporaryDirectory, entry);
+      const info = await lstat(permitPath);
+      if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0) {
+        fail('UNSAFE_STORAGE');
+      }
+      if (info.mtimeMs > now - limits.temporaryTtlMs) continue;
+      const uploadPath = path.join(temporaryDirectory, `${id}.upload`);
+      const uploadInfo = await lstat(uploadPath).catch(error =>
+        error.code === 'ENOENT' ? null : fail('UNSAFE_STORAGE'));
+      if (uploadInfo) {
+        if (!uploadInfo.isFile() || uploadInfo.isSymbolicLink() ||
+            (uploadInfo.mode & 0o077) !== 0) fail('UNSAFE_STORAGE');
+        await unlink(uploadPath);
+      }
+      await unlink(permitPath);
+    }
+  }
+
+  async function readReservations() {
+    const reservations = [];
+    for (const entry of await readdir(temporaryDirectory)) {
+      if (!entry.endsWith('.permit')) continue;
+      const id = entry.slice(0, -'.permit'.length);
+      if (!UUID.test(id)) fail('UNSAFE_STORAGE');
+      const permitPath = path.join(temporaryDirectory, entry);
+      let permit;
+      try {
+        permit = JSON.parse((await readPrivateFile(permitPath, {
+          maxBytes: 1024,
+          minimumBytes: 2,
+        })).toString('utf8'));
+        exactObject(permit, ['contractVersion', 'id', 'tenantId', 'createdAt']);
+      } catch {
+        fail('UNSAFE_STORAGE');
+      }
+      if (permit.contractVersion !== CONTRACT_VERSION || permit.id !== id ||
+          !UUID.test(permit.tenantId) || !Number.isSafeInteger(permit.createdAt) ||
+          permit.createdAt < 0) {
+        fail('UNSAFE_STORAGE');
+      }
+      reservations.push(permit);
+    }
+    return reservations;
+  }
+
+  async function reserveUpload(context, id) {
+    await withLock(async () => {
+      const now = clockValue(clock);
+      await cleanupExpiredReservations(now);
+      const reservations = await readReservations();
+      const reservedBytes = reservations.length * limits.maxUploadBytes;
+      if (reservations.length >= limits.maxConcurrentUploads ||
+          reservedBytes + limits.maxUploadBytes > limits.maxTemporaryBytes) {
+        fail('UPLOAD_BUSY');
+      }
+      const permitPath = path.join(temporaryDirectory, `${id}.permit`);
+      let permit;
+      let created = false;
+      try {
+        permit = await open(permitPath, 'wx', 0o600);
+        created = true;
+        await permit.writeFile(JSON.stringify({
+          contractVersion: CONTRACT_VERSION,
+          id,
+          tenantId: context.tenantId,
+          createdAt: now,
+        }));
+        await permit.sync();
+      } catch {
+        await permit?.close().catch(() => {});
+        if (created) await unlink(permitPath).catch(() => {});
+        fail('STORAGE_UNAVAILABLE');
+      }
+      await permit.close();
+    });
+  }
+
+  async function releaseUpload(id) {
+    await withLock(async () => {
+      const permitPath = path.join(temporaryDirectory, `${id}.permit`);
+      const info = await lstat(permitPath).catch(error =>
+        error.code === 'ENOENT' ? null : fail('UNSAFE_STORAGE'));
+      if (!info) return;
+      if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0) {
+        fail('UNSAFE_STORAGE');
+      }
+      await unlink(permitPath);
+    });
+  }
+
   function objectDirectory(tenantId) {
     return path.join(objectsDirectory, tenantId);
   }
@@ -569,7 +671,7 @@ export async function createPrivateStorageService(options) {
   async function cleanupDirectory(target, suffixes, cutoff) {
     let deleted = 0;
     for (const entry of await readdir(target)) {
-      const match = /^([0-9a-f-]{36})(\.(?:upload|index|deleted|quarantine))$/u.exec(entry);
+      const match = /^([0-9a-f-]{36})(\.(?:upload|index|deleted|permit|quarantine))$/u.exec(entry);
       if (!match || !UUID.test(match[1]) || !suffixes.includes(match[2])) fail('UNSAFE_STORAGE');
       const entryPath = path.join(target, entry);
       const info = await lstat(entryPath);
@@ -586,8 +688,9 @@ export async function createPrivateStorageService(options) {
 
   async function cleanTemporaryFiles(now) {
     return withLock(async () => {
+      await cleanupExpiredReservations(now);
       const temporary = await cleanupDirectory(temporaryDirectory,
-        ['.upload', '.index', '.deleted'], now - limits.temporaryTtlMs);
+        ['.upload', '.index', '.deleted', '.permit'], now - limits.temporaryTtlMs);
       const quarantined = await cleanupDirectory(quarantineDirectory,
         ['.quarantine'], now - limits.quarantineTtlMs);
       return temporary + quarantined;
@@ -606,56 +709,63 @@ export async function createPrivateStorageService(options) {
     }
     const signal = validSignal(input.signal);
     await recordAudit(context, 'storage.upload.requested');
-    const temporaryPath = path.join(temporaryDirectory, `${randomUUID()}.upload`);
-    const contentHash = createHash('sha256');
-    let size = 0;
-    const counter = new Transform({
-      transform(chunk, encoding, callback) {
-        size += chunk.length;
-        if (size > limits.maxUploadBytes) {
-          callback(new PrivateStorageError('FILE_TOO_LARGE'));
-          return;
-        }
-        contentHash.update(chunk);
-        callback(null, chunk);
-      },
-    });
-    const timeoutSignal = AbortSignal.timeout(limits.uploadTimeoutMs);
-    const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+    const uploadId = randomUUID();
+    const temporaryPath = path.join(temporaryDirectory, `${uploadId}.upload`);
+    await reserveUpload(context, uploadId);
     try {
-      await pipeline(input.stream, counter,
-        createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 }),
-        { signal: combinedSignal });
-    } catch (error) {
-      await unlink(temporaryPath).catch(() => {});
-      if (signal?.aborted) fail('INTERRUPTED');
-      if (timeoutSignal.aborted) fail('UPLOAD_TIMEOUT');
-      if (error instanceof PrivateStorageError) throw error;
-      fail('UPLOAD_FAILED');
-    }
-
-    let buffer;
-    try {
-      buffer = await readPrivateFile(temporaryPath, {
-        maxBytes: limits.maxUploadBytes,
-        minimumBytes: 1,
+      const contentHash = createHash('sha256');
+      let size = 0;
+      const counter = new Transform({
+        decodeStrings: false,
+        transform(chunk, encoding, callback) {
+          if (!Buffer.isBuffer(chunk) && !(chunk instanceof Uint8Array)) {
+            callback(new PrivateStorageError('INVALID_INPUT'));
+            return;
+          }
+          size += chunk.byteLength;
+          if (size > limits.maxUploadBytes) {
+            callback(new PrivateStorageError('FILE_TOO_LARGE'));
+            return;
+          }
+          contentHash.update(chunk);
+          callback(null, chunk);
+        },
       });
-      if (buffer.length !== size) fail('UPLOAD_FAILED');
-      const detectedType = validatePng(buffer, limits.maxUploadBytes);
-      if (detectedType !== input.contentType) fail('CONTENT_TYPE_MISMATCH');
-    } catch (error) {
-      if (error instanceof PrivateStorageError &&
-          ['INVALID_FILE', 'CONTENT_TYPE_MISMATCH'].includes(error.code)) {
-        await quarantineUpload(temporaryPath).catch(() => unlink(temporaryPath).catch(() => {}));
+      const timeoutSignal = AbortSignal.timeout(limits.uploadTimeoutMs);
+      const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+      try {
+        await pipeline(input.stream, counter,
+          createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 }),
+          { signal: combinedSignal });
+      } catch (error) {
+        if (signal?.aborted) fail('INTERRUPTED');
+        if (timeoutSignal.aborted) fail('UPLOAD_TIMEOUT');
+        if (error instanceof PrivateStorageError) throw error;
+        fail('UPLOAD_FAILED');
+      }
+      if (signal?.aborted) fail('INTERRUPTED');
+
+      let buffer;
+      try {
+        buffer = await readPrivateFile(temporaryPath, {
+          maxBytes: limits.maxUploadBytes,
+          minimumBytes: 1,
+        });
+        if (buffer.length !== size) fail('UPLOAD_FAILED');
+        const detectedType = validatePng(buffer, limits.maxUploadBytes);
+        if (detectedType !== input.contentType) fail('CONTENT_TYPE_MISMATCH');
+      } catch (error) {
+        if (error instanceof PrivateStorageError &&
+            ['INVALID_FILE', 'CONTENT_TYPE_MISMATCH'].includes(error.code)) {
+          await quarantineUpload(temporaryPath).catch(() => unlink(temporaryPath).catch(() => {}));
+          throw error;
+        }
         throw error;
       }
-      await unlink(temporaryPath).catch(() => {});
-      throw error;
-    }
 
-    const sha256 = contentHash.digest('hex');
-    try {
+      const sha256 = contentHash.digest('hex');
       return await withLock(async () => {
+        if (signal?.aborted) fail('INTERRUPTED');
         const items = await readIndex();
         const duplicate = [...items.values()].find(item =>
           item.tenantId === context.tenantId && item.sha256 === sha256);
@@ -701,9 +811,9 @@ export async function createPrivateStorageService(options) {
         }
         return Object.freeze({ ...publicMetadata(item), deduplicated: false });
       });
-    } catch (error) {
+    } finally {
       await unlink(temporaryPath).catch(() => {});
-      throw error;
+      await releaseUpload(uploadId);
     }
   }
 

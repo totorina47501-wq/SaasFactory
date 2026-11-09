@@ -22,6 +22,8 @@ const storage = await createPrivateStorageService({
     maxUploadBytes: 10 * 1024 * 1024,
     maxTenantBytes: 100 * 1024 * 1024,
     maxTenantFiles: 1000,
+    maxTemporaryBytes: 80 * 1024 * 1024,
+    maxConcurrentUploads: 8,
     retentionMs: 30 * 24 * 60 * 60 * 1000,
   },
 });
@@ -55,6 +57,8 @@ identifiant inexistant (`NOT_FOUND`).
   puis ne publie l’objet qu’après validation complète. `fileName` est vérifié,
   jamais utilisé comme chemin ni conservé. `contentType` ne sert jamais à
   reconnaître le format : il doit simplement correspondre au format détecté.
+  Le flux doit émettre des chunks binaires (`Buffer` ou `Uint8Array`) ; les
+  chunks texte ou objets sont refusés avant écriture.
   Une même empreinte du même tenant retourne le même ID avec
   `deduplicated: true`.
 - `list({cookieHeader, tenantId, requestId})` retourne uniquement les
@@ -94,6 +98,7 @@ Valeurs par défaut :
 | Dimensions PNG | 4096 × 4096 |
 | Quota par tenant | 100 MiB / 1000 objets |
 | Stockage total | 1 GiB / 10 000 objets |
+| Uploads en cours | 8 simultanés / 80 MiB réservés |
 | Rétention | 30 jours |
 | Délai maximal d’upload | 5 minutes |
 | Temporaires incomplets | nettoyage après 1 heure |
@@ -109,12 +114,19 @@ incohérent sont mis en quarantaine privée ; les uploads incomplets ou trop
 volumineux sont supprimés sans quarantaine. Le contenu de quarantaine n’est
 jamais exportable via cette API.
 
+Avant le premier octet, un verrou local réserve atomiquement un emplacement
+d’upload et jusqu’à `maxUploadBytes` d’espace temporaire. Le nombre d’uploads
+concurrents et la somme des réservations sont plafonnés ; un nouvel upload
+échoue avec `UPLOAD_BUSY` si l’un des budgets est atteint. La réservation est
+libérée au succès, à l’échec ou à l’annulation ; après un crash, son TTL est
+supérieur au timeout d’upload et permet au nettoyage explicite de la récupérer.
+
 Les erreurs publiques exposent un code stable dans `PrivateStorageError` :
 `INVALID_INPUT`, `INVALID_CONFIGURATION`, `INVALID_PATH`, `INVALID_FILENAME`,
 `INVALID_TENANT_CONTEXT`, `TENANT_ACCESS_DENIED`, `NOT_FOUND`,
 `CONTENT_TYPE_MISMATCH`, `INVALID_FILE`, `CORRUPT_STORAGE`, `CORRUPT_INDEX`,
 `FILE_TOO_LARGE`, `QUOTA_EXCEEDED`, `STORAGE_LIMIT`, `STORAGE_BUSY`,
-`STORAGE_UNAVAILABLE`, `UNSAFE_STORAGE`, `AUDIT_UNAVAILABLE`, `INTERRUPTED`,
+`UPLOAD_BUSY`, `STORAGE_UNAVAILABLE`, `UNSAFE_STORAGE`, `AUDIT_UNAVAILABLE`, `INTERRUPTED`,
 `UPLOAD_TIMEOUT`, `UPLOAD_FAILED` et `TIME_RANGE`. Les erreurs ne recopient ni
 nom de fichier ni contenu fourni.
 
