@@ -15,6 +15,20 @@ module.exports = async ({github, context, core, fs, orchestration = factoryOrche
       report.decision='deferred:main-advanced';
       return; // Next pass must load the newly merged trusted catalog and code.
     }
+    if (report.orchestration.prepared?.length) {
+      const change = report.orchestration.prepared[0];
+      report.decision = 'prepared:' + change.action + ':#' + change.pr;
+      if (change.action === 'ready-for-review') {
+        // A verified state transition gets exactly one immediate main-only
+        // follow-up to re-evaluate merge eligibility on fresh GitHub data.
+        // No other outcome recursively dispatches; all checks still run again.
+        await github.rest.actions.createWorkflowDispatch({
+          owner, repo, workflow_id: 'saas-factory-agent-dispatch.yml', ref: 'main'
+        });
+        report.reawakened = true;
+      }
+      return;
+    }
     const [issues, prs] = await Promise.all([
       github.paginate(github.rest.issues.listForRepo,{owner,repo,state:'open',per_page:100}),
       github.paginate(github.rest.pulls.list,{owner,repo,state:'open',per_page:100})

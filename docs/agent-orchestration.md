@@ -74,3 +74,12 @@ Merged dependency proof also requires canonical GitHub closing-issue relationshi
 - Aucun brouillon n'est fusionné dans le même passage. La prochaine exécution du coordinateur recontrôle les conditions strictes de merge et laisse GitHub appliquer ses protections de branche.
 - Le rapport `agent-dispatch-report-<id>` expose `orchestration.prepared` pour les transitions `branch-updated` ou `ready-for-review`. L'ancien état `idle:no-approved-missions` avec PR draft ne démontre donc pas un cycle autonome abouti.
 - Ce mécanisme ne contourne **pas** la protection GitHub Actions `Require approval for workflow runs` des PR Copilot : un administrateur doit choisir de la désactiver dans les paramètres Copilot pour supprimer l'étape manuelle.
+
+## Réveil réactif des PR Copilot (2026-11-09)
+
+- Le workflow séparé `.github/workflows/saas-factory-copilot-ci-wake.yml` écoute les exécutions terminées de `SaaS Factory CI` sur les branches `copilot/**`. Il ne fait jamais de checkout de PR et ne possède que `actions: write`, `contents: read`, `pull-requests: read` ; la CI des PR demeure en lecture seule.
+- Il vérifie de nouveau le workflow source par identifiant, chemin et nom, sa conclusion `success`, le SHA exact et la relation univoque avec une PR **ouverte, créée par Copilot, issue du même dépôt et ciblant main**. En cas de divergence, aucun dispatch n'est émis.
+- Le signal `workflow_dispatch` ne vaut ni preuve de revue ni autorisation de fusion. Le coordinateur sur `main` revalide le catalogue, les dépendances, la portée des fichiers, la CI, le job gratuit de revue et toutes les protections avant toute mutation.
+- Lorsqu'il a réellement converti un brouillon Copilot en PR prête à relire, le dispatcher demande **une unique réexécution** de lui-même, via son jeton utilisateur déjà autorisé. La relecture suivante décide seule de la fusion ; une simple mise à jour de branche ne provoque pas cette réexécution puisque la nouvelle CI doit d'abord réussir.
+- Le cron `*/10` reste une voie de secours si GitHub retarde ou saute un événement `workflow_run`, sans augmenter la limite de deux missions actives. Les workflows de revue Copilot payante restent désactivés.
+- **Critère de validation réelle :** PR Copilot synchronisée → CI PR verte → réveil Copilot PR → dispatcher `prepared:ready-for-review` → unique relance → fusion protégée → CI main verte → nouveau dispatch et mission suivante. Les API GitHub peuvent refuser les protections ou nécessiter le réglage administrateur de validation des Actions Copilot ; aucun contournement n'est prévu.
