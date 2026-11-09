@@ -1,0 +1,74 @@
+{
+  "intakeVersion": 2,
+  "product": {
+    "name": "Workshop Scheduler",
+    "slug": "workshop-scheduler",
+    "domain": "workshop.example",
+    "summary": "Neutral demonstration SaaS for managing appointment requests."
+  },
+  "market": {
+    "audience": "Independent service providers",
+    "problem": "Manual scheduling creates delays",
+    "monetization": "Subscription idea; payments disabled"
+  },
+  "mvp": [
+    {
+      "id": "schedule",
+      "title": "Appointment requests",
+      "description": "Create and view synthetic appointment requests without live accounts or external calendars.",
+      "priority": "p0",
+      "owner": "generator-engineer",
+      "dependsOn": [],
+      "moduleIds": ["api", "auth"],
+      "capabilityIds": ["auth-rbac"],
+      "acceptanceCriteria": [
+        "A visitor can submit a synthetic appointment request.",
+        "The generated example exposes no production authentication or calendar integration."
+      ]
+    },
+    {
+      "id": "accessibility",
+      "title": "Accessible scheduling UX",
+      "description": "Keyboard-friendly neutral appointment interface.",
+      "priority": "p1",
+      "owner": "ux-accessibility",
+      "dependsOn": ["schedule"],
+      "moduleIds": [],
+      "capabilityIds": ["e2e-playwright"],
+      "acceptanceCriteria": [
+        "The appointment request flow is operable with a keyboard.",
+        "Form fields expose programmatic labels and validation messages."
+      ]
+    }
+  ],
+  "scaffold": {
+    "modules": [
+      {"id": "ai-disabled", "version": "1.0.0"},
+      {"id": "api", "version": "1.0.0"},
+      {"id": "auth", "version": "1.0.0"},
+      {"id": "billing-test", "version": "1.0.0"}
+    ],
+    "acceptedLimitations": [
+      {"id": "ai-disabled", "version": "1.0.0", "limitations": ["disabled-by-design"]},
+      {"id": "api", "version": "1.0.0", "limitations": ["example-route-only"]},
+      {"id": "auth", "version": "1.0.0", "limitations": ["injected-boundary-only"]},
+      {"id": "billing-test", "version": "1.0.0", "limitations": ["simulation-only"]}
+    ],
+    "prerequisites": [],
+    "permissions": [],
+    "offline": true,
+    "languages": ["fr-FR", "en"],
+    "defaultLanguage": "fr-FR",
+    "deploymentTarget": "none"
+  },
+  "capabilities": [
+    "auth-rbac",
+    "subscriptions",
+    "notifications-email",
+    "privacy-export-delete",
+    "e2e-playwright"
+  ],
+  "assumptions": [
+    "Product concept only: real database, identity provider and payment processing require separately approved implementation."
+  ]
+}

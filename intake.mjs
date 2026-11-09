@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {parseConfigText, validateConfig} from './generate.mjs';
+import {compileIntakeV2} from './factory/intake-v2.mjs';
 import capabilityCatalog from './docs/catalog/saas-capabilities-v1.json' with {type:'json'};
 
 const allowedKeys=['intakeVersion','product','market','mvp','scaffold','capabilities','assumptions'];
@@ -18,7 +19,7 @@ function keys(obj,expected,context){
  if(!plain(obj))throw Error(context+' must be an object');
  const actual=Object.keys(obj);
  const extra=actual.filter(k=>!expected.includes(k)),missing=expected.filter(k=>!Object.hasOwn(obj,k));
- if(extra.length||missing.length)throw Error(context+' keys invalid: extra='+extra.join(',')+' missing='+missing.join(','));
+ if(extra.length||missing.length)throw Error(context+' keys invalid');
 }
 function string(v,name,max=500){
  if(typeof v!=='string'||!v.trim()||v.length>max||/[\x00-\x1f\x7f]/u.test(v))throw Error(name+' must be a nonempty printable string of at most '+max+' characters');
@@ -68,16 +69,26 @@ function verifyIntake(raw){
  if(!Array.isArray(raw.assumptions)||raw.assumptions.length>20)throw Error('assumptions must be array <=20');
  const assumptions=raw.assumptions.map((a,i)=>string(a,'assumptions['+i+']',300));
  // The generator remains the authority for the scaffold schema and policy.
- const generatorConfig=validateConfig({
-  schemaVersion:1,productName:product.name,projectSlug:product.slug,domain:product.domain,
-  modules:raw.scaffold.modules,languages:raw.scaffold.languages,
-  defaultLanguage:raw.scaffold.defaultLanguage,deploymentTarget:raw.scaffold.deploymentTarget
- });
+ let generatorConfig;
+ try{
+  generatorConfig=validateConfig({
+   schemaVersion:1,productName:product.name,projectSlug:product.slug,domain:product.domain,
+   modules:raw.scaffold.modules,languages:raw.scaffold.languages,
+   defaultLanguage:raw.scaffold.defaultLanguage,deploymentTarget:raw.scaffold.deploymentTarget
+  });
+ }catch{throw Error('generator configuration is invalid')}
  // Do not carry customer details or AI prose into the generated starter.
  return {intakeVersion:1,product,market,mvp,capabilities,assumptions,generatorConfig};
 }
-function compileIntake(text){
- const verified=verifyIntake(parseConfigText(text));
+function parseIntakeText(text){
+ try{return parseConfigText(text)}
+ catch(error){
+  if(error.message.startsWith('Duplicate JSON key:'))throw Error('Duplicate JSON key');
+  throw Error('Invalid intake JSON')
+ }
+}
+function compileIntakeV1(raw){
+ const verified=verifyIntake(raw);
  return {schemaVersion:1,kind:'saas-factory-intake-plan',projectSlug:verified.generatorConfig.projectSlug,
   generatorConfig:verified.generatorConfig,
   capabilityRequests:verified.capabilities,
@@ -91,6 +102,11 @@ function compileIntake(text){
   assumptions:verified.assumptions
  };
 }
+function compileIntake(text){
+ const raw=parseIntakeText(text);
+ if(raw?.intakeVersion===2)return compileIntakeV2(raw);
+ return compileIntakeV1(raw);
+}
 function main(argv){
  if(argv.length!==2||argv[0]!=='--input'||!argv[1]||argv[1].startsWith('--'))throw Error('Usage: node intake.mjs --input <intake.json>');
  const json=fs.readFileSync(argv[1],'utf8');
@@ -99,5 +115,4 @@ function main(argv){
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
  try{main(process.argv.slice(2))}catch(e){process.stderr.write('saas-intake: '+e.message+'\n');process.exitCode=1}
 }
-export {verifyIntake,compileIntake};
-
+export {verifyIntake,compileIntake,compileIntakeV1,parseIntakeText};
