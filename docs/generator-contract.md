@@ -111,3 +111,11 @@ La future implémentation devra démontrer au minimum ces cas, hors réseau et s
 La création du dépôt distant est une étape manuelle, distincte de la génération. Après un `dry-run` relu, le propriétaire choisit le nom, la visibilité et l’organisation du nouveau dépôt, puis crée un dépôt GitHub vide par l’interface ou un outil autorisé. Le générateur n’appelle pas l’API GitHub, ne crée pas de dépôt, ne pousse pas de commit et ne reçoit pas de jeton GitHub.
 
 Générer dans un répertoire isolé, inspecter l’arborescence et le diff, exécuter les contrôles locaux sans secrets, puis initialiser un historique Git neuf uniquement après validation humaine. Ne jamais copier le `.git` ou l’historique de Project3. Relier le dépôt vide et publier le premier commit sont des actions explicites du propriétaire ; les secrets de CI, l’intégration des fournisseurs et tout déploiement sont configurés et validés séparément. La réussite de la génération ou de la CI ne vaut ni création de dépôt, ni mise en production, ni recette de production.
+
+## Générateur composable v2
+
+`schemaVersion: 2` est une entrée additive ; la v1 conserve son schéma, son manifeste et ses sorties. Le format v2 et son API sont définis dans [le contrat versionné v2](contracts/generator-v2.md). Une v2 nomme chaque module et sa version, accepte explicitement les limitations des modules non vérifiés, et déclare les prérequis, permissions et exigences offline. `ai-disabled@1.0.0` reste requis.
+
+La composition n'utilise que les fichiers rendus par les modèles Factory v1 et associés à l'allowlist v2 versionnée. La sortie comprend `factory-manifest.json`, les hashes SHA-256 des fichiers générés et `docs/installation-report.md`. Ces fichiers documentent les versions et limites ; aucune commande, migration, dépendance ou hook du descripteur n'est exécuté. Les contrôles v1 de validation, d'exclusion et de destination restent appliqués.
+
+La migration est explicite via `migrateV1Config(value, decisions)`. Elle requiert l'acceptation par ID/version de toutes les limitations, ainsi que des décisions explicites de prérequis, permissions et mode offline ; elle ne transforme pas automatiquement les scaffolds v1 en capacités vérifiées. Le CLI choisit le contrat selon `schemaVersion` et reste en dry-run sans option `--write`.
