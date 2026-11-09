@@ -16,7 +16,7 @@ test('dispatch workflow isolates a user token from checkout and refuses missing 
  assert.doesNotMatch(workflow,/^\s+pull_request(?:_target)?:/m);
  // Current policy uses scheduled/manual dispatch; the paid review trigger stays paused.
  assert.match(workflow,/workflow_dispatch:/);
- assert.ok(workflow.includes("cron: '*/30 * * * *'"));
+ assert.ok(workflow.includes("cron: '*/10 * * * *'"));
  assert.doesNotMatch(workflow,/^\\s+workflow_run:/m);
  assert.match(workflow,/issues: read/);
  assert.match(workflow,/pull-requests: read/);
@@ -137,7 +137,7 @@ test('review signal has no privileged credentials or untrusted checkout',()=>{
 test('privileged dispatcher only runs trusted scheduled or manual events',()=>{
  const workflow=fs.readFileSync(require('node:path').join(__dirname,'../.github/workflows/saas-factory-agent-dispatch.yml'),'utf8');
  assert.match(workflow,/workflow_dispatch:/);
- assert.match(workflow,/cron: '\*\/30 \* \* \* \*'/);
+ assert.match(workflow,/cron: '\*\/10 \* \* \* \*'/);
  assert.doesNotMatch(workflow,/^  workflow_run:/m);
  assert.doesNotMatch(workflow,/Verify trusted review notification job before privileged dispatch/);
  assert.match(workflow,/github\.repository == 'totorina47501-wq\/SaasFactory'/);
@@ -149,4 +149,27 @@ test('privileged dispatcher only runs trusted scheduled or manual events',()=>{
  assert.equal(check('refs/heads/main','totorina47501-wq/SaasFactory'),true);
  assert.equal(check('refs/pull/2/merge','totorina47501-wq/SaasFactory'),false);
  assert.equal(check('refs/heads/main','other/repo'),false);
+});
+
+test('trusted post-main wake dispatches only after the exact green main push CI',()=>{
+ const path=require('node:path');
+ const wake=fs.readFileSync(path.join(__dirname,'../.github/workflows/saas-factory-post-main-ci-wake.yml'),'utf8');
+ const ci=fs.readFileSync(path.join(__dirname,'../.github/workflows/ci.yml'),'utf8');
+ assert.match(wake,/^  workflow_run:/m);
+ assert.match(wake,/workflows: \['SaaS Factory CI'\]/);
+ assert.match(wake,/types: \[completed\]/);
+ assert.match(wake,/branches: \[main\]/);
+ assert.match(wake,/github\.event\.workflow_run\.event == 'push'/);
+ assert.match(wake,/github\.event\.workflow_run\.conclusion == 'success'/);
+ assert.match(wake,/github\.event\.workflow_run\.head_sha == github\.sha/);
+ assert.match(wake,/workflow\.data\.path !== '\.github\/workflows\/ci\.yml'/);
+ assert.match(wake,/main\.data\.commit\?\.sha !== source\.head_sha/);
+ assert.match(wake,/github\.rest\.actions\.createWorkflowDispatch/);
+ assert.match(wake,/workflow_id:'saas-factory-agent-dispatch\.yml'/);
+ assert.match(wake,/^permissions:\s*\n  actions: write\n  contents: read/m);
+ assert.doesNotMatch(wake,/actions\/checkout|COPILOT_DISPATCH_TOKEN/);
+ assert.doesNotMatch(ci,/actions: write|COPILOT_DISPATCH_TOKEN/);
+ const dispatch=fs.readFileSync(path.join(__dirname,'../.github/workflows/saas-factory-agent-dispatch.yml'),'utf8');
+ assert.match(dispatch,/cron: '\*\/10 \* \* \* \*'/);
+ assert.doesNotMatch(dispatch,/^  workflow_run:/m);
 });

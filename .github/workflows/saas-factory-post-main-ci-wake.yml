@@ -1,0 +1,63 @@
+name: SaaS Factory trusted post-main CI wake
+# Trust boundary: never run privileged automation from a pull-request workflow.
+on:
+  workflow_run:
+    workflows: ['SaaS Factory CI']
+    types: [completed]
+    branches: [main]
+permissions:
+  actions: write
+  contents: read
+concurrency:
+  group: saas-factory-trusted-main-wake
+  cancel-in-progress: false
+jobs:
+  wake:
+    if: >-
+      github.repository == 'totorina47501-wq/SaasFactory' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.repository.full_name == github.repository &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_sha == github.sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Revalidate green main CI and wake the protected dispatcher
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const {owner,repo} = context.repo;
+            const source = context.payload.workflow_run;
+            if (!source || source.event !== 'push' || source.conclusion !== 'success' ||
+                source.head_branch !== 'main' || source.repository?.full_name !== context.repo.owner + '/' + context.repo.repo ||
+                source.head_repository?.full_name !== context.repo.owner + '/' + context.repo.repo ||
+                !/^[0-9a-f]{40}$/i.test(source.head_sha || '')) {
+              throw new Error('Untrusted source workflow run');
+            }
+            const [workflow, latest, main] = await Promise.all([
+              github.rest.actions.getWorkflow({owner,repo,workflow_id:source.workflow_id}),
+              github.rest.actions.getWorkflowRun({owner,repo,run_id:source.id}),
+              github.rest.repos.getBranch({owner,repo,branch:'main'})
+            ]);
+            if (workflow.data.path !== '.github/workflows/ci.yml' ||
+                workflow.data.name !== 'SaaS Factory CI' || workflow.data.state !== 'active' ||
+                latest.data.id !== source.id || latest.data.workflow_id !== source.workflow_id ||
+                latest.data.event !== 'push' || latest.data.status !== 'completed' ||
+                latest.data.conclusion !== 'success' ||
+                latest.data.head_sha !== source.head_sha ||
+                latest.data.repository?.full_name !== context.repo.owner + '/' + context.repo.repo ||
+                latest.data.head_repository?.full_name !== context.repo.owner + '/' + context.repo.repo) {
+              throw new Error('Main CI provenance or latest status invalid');
+            }
+            if (main.data.commit?.sha !== source.head_sha || context.sha !== source.head_sha) {
+              core.notice('Main advanced after CI: next green main CI will wake dispatch');
+              return;
+            }
+            await github.rest.actions.createWorkflowDispatch({
+              owner,repo,workflow_id:'saas-factory-agent-dispatch.yml',ref:'main'
+            });
+            core.info('Trusted green-main CI dispatched the autonomous coordinator');
