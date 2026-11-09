@@ -83,7 +83,9 @@ Il n'y a pas de labels à cardinalité libre, de scraping distant ni d'export.
 ### Interface d'audit commune
 
 L'interface `audit.append(context, event)` accepte un contexte exact
-`{ contractVersion: 1, tenantId, requestId }` et un événement sans contenu libre
+`{ contractVersion: 1, tenantId, requestId }` établi par le module tenancy de
+l'application ; la validation de forme locale ne constitue pas une autorisation.
+Elle accepte un événement sans contenu libre
 `{ action, outcome, resourceType, resourceId?, actorId? }`. Les identifiants
 doivent être des UUID ; `outcome` est `success`, `failure` ou `denied`.
 L'événement persisté contient l'ID d'événement généré, l'heure, le tenant, la

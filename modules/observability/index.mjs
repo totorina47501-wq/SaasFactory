@@ -477,7 +477,13 @@ export function createObservabilityService(options) {
   }
 
   function readAudit(contextValue) {
-    const operation = auditQueue.then(() => readAuditRecords(contextValue));
+    let context;
+    try {
+      context = validateContext(contextValue);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const operation = auditQueue.then(() => readAuditRecords(context));
     auditQueue = operation.catch(() => {});
     return operation;
   }
@@ -573,7 +579,15 @@ export function createObservabilityService(options) {
     },
     audit: Object.freeze({
       append(context, event) {
-        const operation = auditQueue.then(() => appendAudit(context, event));
+        let safeContext;
+        let safeEvent;
+        try {
+          safeContext = validateContext(context);
+          safeEvent = validateAuditEvent(event);
+        } catch (error) {
+          return Promise.reject(error);
+        }
+        const operation = auditQueue.then(() => appendAudit(safeContext, safeEvent));
         auditQueue = operation.catch(() => {});
         return operation;
       },
