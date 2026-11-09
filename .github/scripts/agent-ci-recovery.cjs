@@ -113,7 +113,7 @@ module.exports = async ({github, context, core}) => {
     await writeSummary(core, report);
     if (report.decision === 'blocked:attempt-limit-reached' ||
         report.decision === 'blocked:global-attempt-limit-reached') {
-      core.setFailed('CI recovery blocked: the two-request quota for this PR/SHA is exhausted');
+      core.setFailed('CI recovery blocked: correction quota exhausted; no further AI requests will be sent');
     }
     return report;
   };
