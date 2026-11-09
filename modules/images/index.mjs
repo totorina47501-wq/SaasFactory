@@ -11,7 +11,7 @@ const DEFAULTS = Object.freeze({
   maxOutputBytes: 8 * 1024 * 1024,
   maxPixels: 8 * 1024 * 1024,
   maxDimension: 4096,
-  maxWorkingBytes: 208 * 1024 * 1024,
+  maxWorkingBytes: 272 * 1024 * 1024,
   maxInFlightBytes: 16 * 1024 * 1024,
   maxConcurrentUploads: 2,
   maxCarouselItems: 20,
@@ -103,7 +103,7 @@ function validateLimits(value = {}) {
   }
   if (limits.maxInputBytes > limits.maxInFlightBytes ||
       limits.maxInFlightBytes < limits.maxInputBytes * limits.maxConcurrentUploads ||
-      limits.maxWorkingBytes < limits.maxPixels * 24 +
+      limits.maxWorkingBytes < limits.maxPixels * 32 +
         limits.maxInputBytes + limits.maxOutputBytes) {
     fail('INVALID_CONFIGURATION');
   }
@@ -378,7 +378,7 @@ export async function createImageService(options) {
   let activeUploads = 0;
   let reservedBytes = 0;
   let reservedWorkingBytes = 0;
-  const workingReservation = limits.maxPixels * 24 +
+  const workingReservation = limits.maxPixels * 32 +
     limits.maxInputBytes + limits.maxOutputBytes;
 
   function reserveWorkingSet() {
@@ -471,6 +471,8 @@ export async function createImageService(options) {
       'cookieHeader', 'tenantId', 'requestId', 'objectId', 'width', 'height',
     ]);
     if (value.signal !== undefined && !(value.signal instanceof AbortSignal)) fail('INVALID_INPUT');
+    validateResize({ width: value.width, height: value.height }, limits);
+    validateCompressionLevel(value.compressionLevel);
     const sourceId = validateImageId(value.objectId);
     const releaseWorkingSet = reserveWorkingSet();
     try {

@@ -78,15 +78,15 @@ Limites par défaut et plafonds configurables :
 | Image de sortie | 8 MiB | 20 MiB |
 | Pixels par image | 8 Mpx | 16 Mpx |
 | Dimension maximale | 4096 px | 4096 px |
-| Mémoire réservée par image active | 192 MiB | 1 GiB |
+| Mémoire réservée par image active | 272 MiB | 1 GiB |
 | Octets entrants simultanés réservés | 16 MiB | 128 MiB |
 | Uploads simultanés | 2 | 8 |
 | Éléments par carrousel | 20 | 50 |
 | Durée d’upload | 60 s | 5 min |
 
-Le budget mémoire réserve 24 octets par pixel maximal et par opération active
-pour couvrir les buffers décodés, rééchantillonnés et encodés. Les limites
-doivent satisfaire `maxWorkingBytes >= maxPixels * 24` et
+Le budget mémoire réserve 32 octets par pixel maximal et par opération active,
+plus les plafonds de buffers entrant et sortant. Les limites doivent satisfaire
+`maxWorkingBytes >= maxPixels * 32 + maxInputBytes + maxOutputBytes` et
 `maxInFlightBytes >= maxInputBytes * maxConcurrentUploads`; les opérations qui
 ne peuvent réserver leur budget échouent avec `IMAGE_BUSY`. La limite effective
 de sortie peut être plus basse que `maxOutputBytes` si le stockage privé est

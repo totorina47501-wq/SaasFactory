@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, rm } from 'node:fs/promises';
-import { Readable } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { deflateSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -54,22 +54,57 @@ function png(width, height, { colorType = 6, extra = [], filter = 0 } = {}) {
   header[8] = 8;
   header[9] = colorType;
   const rows = Buffer.alloc(height * (width * channels + 1));
+  let previous = Buffer.alloc(width * channels);
   for (let y = 0; y < height; y += 1) {
     const rowStart = y * (width * channels + 1);
     rows[rowStart] = filter;
+    const current = Buffer.alloc(width * channels);
     for (let x = 0; x < width; x += 1) {
       const offset = rowStart + 1 + x * channels;
-      rows[offset] = x * 25;
-      rows[offset + 1] = y * 30;
-      rows[offset + 2] = 80;
-      if (channels === 4) rows[offset + 3] = 255;
+      current[x * channels] = x * 25;
+      current[x * channels + 1] = y * 30;
+      current[x * channels + 2] = 80;
+      if (channels === 4) current[x * channels + 3] = 255;
     }
+    for (let index = 0; index < current.length; index += 1) {
+      const left = index >= channels ? current[index - channels] : 0;
+      const above = previous[index];
+      const upperLeft = index >= channels ? previous[index - channels] : 0;
+      const predictor = filter === 0 ? 0 :
+        filter === 1 ? left :
+          filter === 2 ? above :
+            filter === 3 ? Math.floor((left + above) / 2) :
+              (() => {
+                const estimate = left + above - upperLeft;
+                const leftDistance = Math.abs(estimate - left);
+                const aboveDistance = Math.abs(estimate - above);
+                const upperLeftDistance = Math.abs(estimate - upperLeft);
+                return leftDistance <= aboveDistance && leftDistance <= upperLeftDistance ? left :
+                  aboveDistance <= upperLeftDistance ? above : upperLeft;
+              })();
+      rows[rowStart + 1 + index] = (current[index] - predictor) & 0xff;
+    }
+    previous = current;
   }
   return Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     pngChunk('IHDR', header),
     ...extra.map(([type, data]) => pngChunk(type, data)),
     pngChunk('IDAT', deflateSync(rows)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function pngWithDeclaredDimensions(width, height) {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 6;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(Buffer.alloc(1))),
     pngChunk('IEND', Buffer.alloc(0)),
   ]);
 }
@@ -178,7 +213,7 @@ test('rejects mismatched MIME, active metadata, corrupt data and pixel bombs', a
     stream: Readable.from([png(1, 1, { extra: [['eXIf', Buffer.from('metadata')]] })]),
   })), 'UNSUPPORTED_FORMAT');
   await expectImageCode(fixture.images.upload(uploadInput({
-    stream: Readable.from([png(5, 5)]),
+    stream: Readable.from([pngWithDeclaredDimensions(4096, 4096)]),
   })), 'PIXEL_LIMIT');
 
   const corrupt = png(1, 1);
@@ -266,4 +301,25 @@ test('fails closed on missing private storage capabilities and invalid limits', 
     storage: fixture.storage,
     limits: { maxPixels: 0 },
   }), error => error instanceof ImagesError && error.code === 'INVALID_CONFIGURATION');
+});
+
+test('reserves the processing memory budget before consuming concurrent uploads', async t => {
+  const fixture = await setup({
+    imageLimits: {
+      maxInputBytes: 256,
+      maxOutputBytes: 256,
+      maxPixels: 4,
+      maxDimension: 4,
+      maxWorkingBytes: 640,
+      maxInFlightBytes: 512,
+      maxConcurrentUploads: 2,
+    },
+  });
+  t.after(fixture.dispose);
+  const pending = new PassThrough();
+  const firstUpload = fixture.images.upload(uploadInput({ stream: pending }));
+  await new Promise(resolve => setImmediate(resolve));
+  await expectImageCode(fixture.images.upload(uploadInput()), 'IMAGE_BUSY');
+  pending.end(png(1, 1));
+  assert.equal((await firstUpload).width, 1);
 });
