@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "scope": "github-copilot-codex-partner-role-playbooks",
+  "ownerIssue": 121,
+  "createdOn": "2026-11-09",
+  "reviewOn": "2026-12-15",
+  "expiresOn": "2027-01-10",
+  "status": "documentation-only",
+  "activation": {
+    "provider": "GitHub Copilot partner Codex",
+    "providerMustBeSelectedInGitHubUI": true,
+    "noAutomaticPartnerAssignment": true,
+    "noCustomCopilotRoleRegistration": true,
+    "requiresExplicitIssueAndPlaybook": true,
+    "requiresAssigneeReadBack": true,
+    "maxActiveAcrossCopilotAndCodex": 4,
+    "maxNewCodexBeforeCapacityRecheck": 1,
+    "doesNotChangeDispatcher": true,
+    "forbidUnverifiedCapacity": true
+  },
+  "retirement": {
+    "rule": "Retire temporary role use after the heavy technical wave or expiration; renew only by explicit reviewed PR.",
+    "preservePermanentProfiles": 8,
+    "removeAutoRoutes": false
+  },
+  "roles": [
+    {
+      "id": "codex-rag-architect",
+      "file": "docs/codex-taskforce/rag-architecture.md",
+      "focus": "Complex RAG architecture, safe deletion, ACL and recoverable indexing",
+      "issueReferences": [
+        42,
+        46
+      ],
+      "eligibility": "standby-until-scope-and-existing-agent-handoff",
+      "forbiddenAreas": [
+        "active-copilot-rag-owned-files",
+        "project3-and-mentioncheck"
+      ]
+    },
+    {
+      "id": "codex-backend-security",
+      "file": "docs/codex-taskforce/backend-security.md",
+      "focus": "High-complexity isolated API, auth and data boundary work",
+      "issueReferences": [
+        49,
+        52
+      ],
+      "eligibility": "standby-until-independent-scoped-task-approved",
+      "forbiddenAreas": [
+        "auth-or-api-already-merged",
+        "production-secrets"
+      ]
+    },
+    {
+      "id": "codex-mobile-games",
+      "file": "docs/codex-taskforce/mobile-games.md",
+      "focus": "Seasonal HTML5 games, mobile-first UX, isolated templates",
+      "issueReferences": [
+        119
+      ],
+      "eligibility": "candidate-after-live-capacity-and-platform-confirmation",
+      "forbiddenAreas": [
+        "existing-copilot-open-pr-paths",
+        "native-app-publication"
+      ]
+    },
+    {
+      "id": "codex-devops-performance",
+      "file": "docs/codex-taskforce/devops-performance.md",
+      "focus": "Hard CI reliability, performance and operations with bounded tests",
+      "issueReferences": [
+        49,
+        53
+      ],
+      "eligibility": "standby-until-independent-scoped-task-approved",
+      "forbiddenAreas": [
+        "ci-configuration-without-authorization",
+        "branch-protection-or-credentials"
+      ]
+    }
+  ]
+}
