@@ -1,33 +1,15 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-const PERIOD_MS = 30 * DAY_MS;
-const TRIAL_MS = 14 * DAY_MS;
+import {
+  EVENT_STATES,
+  EVENT_TRANSITIONS,
+  PERIOD_MS,
+  PLANS,
+  STATES,
+  TRIAL_MS,
+} from './contract.mjs';
+import { BillingModuleError, fail } from './errors.mjs';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
-const STATES = Object.freeze(['trialing', 'active', 'past_due', 'canceled']);
-const EVENT_STATES = Object.freeze({
-  'subscription.active': 'active',
-  'subscription.past_due': 'past_due',
-  'subscription.canceled': 'canceled',
-});
-const PLANS = Object.freeze([
-  Object.freeze({ id: 'free', name: 'Free', amountCents: 0, currency: 'USD', simulated: true }),
-  Object.freeze({ id: 'pro', name: 'Pro', amountCents: 1200, currency: 'USD', simulated: true }),
-  Object.freeze({ id: 'business', name: 'Business', amountCents: 4900, currency: 'USD', simulated: true }),
-]);
-
-export class BillingModuleError extends Error {
-  constructor(code) {
-    super(code);
-    this.name = 'BillingModuleError';
-    this.code = code;
-  }
-}
-
-function fail(code) {
-  throw new BillingModuleError(code);
-}
 
 function exactInput(value, expected, required = expected) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) fail('INVALID_INPUT');
@@ -64,7 +46,12 @@ function validatePlan(value) {
 }
 
 function validateNow(clock) {
-  const now = clock();
+  let now;
+  try {
+    now = clock();
+  } catch {
+    fail('UNAVAILABLE');
+  }
   if (!Number.isSafeInteger(now) || now < 0) fail('UNAVAILABLE');
   return now;
 }
@@ -131,7 +118,7 @@ export function createMemoryBillingStore() {
   const histories = new Map();
   const starts = new Map();
   const renewals = new Map();
-  const processedEvents = new Set();
+  const processedEvents = new Map();
   const tenantLocks = new Map();
 
   async function serialize(tenantId, operation) {
@@ -240,6 +227,7 @@ export function createMemoryBillingStore() {
         }
         const periodStartAt = subscription.currentPeriodEnd;
         const periodEndAt = periodStartAt + PERIOD_MS;
+        if (!Number.isSafeInteger(periodEndAt)) fail('UNAVAILABLE');
         const plan = validatePlan(subscription.planId);
         const invoice = plan.amountCents === 0 ? null : Object.freeze({
           id: invoiceId,
@@ -279,7 +267,9 @@ export function createMemoryBillingStore() {
     async applyEvent({ event }) {
       return serialize(event.tenantId, () => {
         const eventKey = `${event.tenantId}:${event.id}`;
+        const eventFingerprint = eventText(event);
         if (processedEvents.has(eventKey)) {
+          if (processedEvents.get(eventKey) !== eventFingerprint) fail('EVENT_ID_CONFLICT');
           return Object.freeze({
             duplicate: true,
             stale: false,
@@ -290,6 +280,7 @@ export function createMemoryBillingStore() {
         if (!subscription || subscription.id !== event.subscriptionId) fail('NOT_FOUND');
         const stale = event.occurredAt <= subscription.updatedAt;
         if (!stale) {
+          if (!EVENT_TRANSITIONS[event.type].includes(subscription.status)) fail('INVALID_TRANSITION');
           subscription.status = EVENT_STATES[event.type];
           subscription.cancelAtPeriodEnd = subscription.status === 'canceled'
             ? false
@@ -297,7 +288,7 @@ export function createMemoryBillingStore() {
           subscription.updatedAt = event.occurredAt;
           subscription.version += 1;
         }
-        processedEvents.add(eventKey);
+        processedEvents.set(eventKey, eventFingerprint);
         addHistory(event.tenantId, {
           id: event.id,
           type: event.type,
@@ -372,6 +363,8 @@ export function createBillingService(configuration) {
       const idempotencyKey = validateIdempotencyKey(input.idempotencyKey);
       const now = validateNow(clock);
       const trialEndAt = trial ? now + TRIAL_MS : null;
+      const currentPeriodEnd = trialEndAt ?? now + PERIOD_MS;
+      if (!Number.isSafeInteger(currentPeriodEnd)) fail('UNAVAILABLE');
       const subscription = Object.freeze({
         id: randomUUID(),
         tenantId: context.tenantId,
@@ -379,7 +372,7 @@ export function createBillingService(configuration) {
         status: trial ? 'trialing' : 'active',
         trialEndAt,
         currentPeriodStartAt: now,
-        currentPeriodEnd: trialEndAt ?? now + PERIOD_MS,
+        currentPeriodEnd,
         cancelAtPeriodEnd: false,
         createdAt: now,
         updatedAt: now,
@@ -444,7 +437,7 @@ export function createBillingService(configuration) {
 export const billingContract = Object.freeze({
   version: 1,
   provider: 'none',
-  persistence: 'in-memory-demo-adapter',
+  persistence: 'local-postgresql-or-in-memory-demo-adapter',
   plans: PLANS,
   states: STATES,
   periodMs: PERIOD_MS,
@@ -452,3 +445,6 @@ export const billingContract = Object.freeze({
   invoices: 'simulated-no-payment',
   events: 'local-hmac-sha256',
 });
+
+export { BillingModuleError } from './errors.mjs';
+export { createPostgresBillingStore, runBillingMigrations } from './postgres-store.mjs';

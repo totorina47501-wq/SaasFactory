@@ -5,6 +5,7 @@ import {
   BillingModuleError,
   createBillingService,
   createMemoryBillingStore,
+  createPostgresBillingStore,
   signBillingEvent,
 } from '../modules/billing-simulated/index.mjs';
 
@@ -80,7 +81,14 @@ test('creates a trial subscription with demo invoice history and isolates tenant
     trial: true,
     idempotencyKey: 'trial-start-1',
   });
+  const replay = await service.startSubscription({
+    ...auth(),
+    planId: 'pro',
+    trial: true,
+    idempotencyKey: 'trial-start-1',
+  });
 
+  assert.equal(replay.id, subscription.id);
   assert.equal(subscription.status, 'trialing');
   assert.equal(subscription.planId, 'pro');
   assert.equal(subscription.trialEndAt, subscription.currentPeriodEnd);
@@ -136,6 +144,50 @@ test('cancellation at period end prevents a later renewal', async () => {
   assert.deepEqual(await service.listInvoices(auth()), []);
 });
 
+test('scopes idempotency keys by operation', async () => {
+  const { service, setTime } = fixture();
+  const input = {
+    ...auth(),
+    planId: 'pro',
+    idempotencyKey: 'shared-local-key',
+  };
+  const subscription = await service.startSubscription(input);
+  setTime(subscription.currentPeriodEnd);
+  const renewal = await service.renewSubscription({
+    ...auth(),
+    idempotencyKey: 'shared-local-key',
+  });
+  const replay = await service.startSubscription(input);
+
+  assert.equal(renewal.status, 'renewed');
+  assert.equal(replay.id, subscription.id);
+});
+
+test('rejects unsafe clock values and timestamp overflow without changing state', async () => {
+  const { service, setTime } = fixture({
+    now: Number.MAX_SAFE_INTEGER - billingContract.periodMs,
+  });
+  const subscription = await service.startSubscription({
+    ...auth(),
+    planId: 'pro',
+    idempotencyKey: 'overflow-start',
+  });
+  setTime(Number.MAX_SAFE_INTEGER);
+
+  await expectCode(service.renewSubscription({
+    ...auth(),
+    idempotencyKey: 'overflow-renew',
+  }), 'UNAVAILABLE');
+  assert.equal((await service.getSubscription(auth())).currentPeriodEnd, subscription.currentPeriodEnd);
+  const invalidClock = createBillingService({
+    store: createMemoryBillingStore(),
+    tenancy: createTenancy(),
+    signingKey: SIGNING_KEY,
+    clock: () => { throw new Error('test-only clock failure'); },
+  });
+  await expectCode(invalidClock.cancelSubscription(auth()), 'UNAVAILABLE');
+});
+
 test('verifies local event signatures, deduplicates replay, and ignores reordered stale events', async () => {
   const { service } = fixture();
   const subscription = await service.startSubscription({
@@ -168,6 +220,11 @@ test('verifies local event signatures, deduplicates replay, and ignores reordere
     event: older,
     signature: signBillingEvent(older, SIGNING_KEY),
   })).stale, true);
+  const conflicting = { ...newer, type: 'subscription.active' };
+  await expectCode(service.processEvent({
+    event: conflicting,
+    signature: signBillingEvent(conflicting, SIGNING_KEY),
+  }), 'EVENT_ID_CONFLICT');
   await expectCode(service.processEvent({
     event: older,
     signature: '0'.repeat(64),
@@ -176,6 +233,19 @@ test('verifies local event signatures, deduplicates replay, and ignores reordere
   const history = await service.getHistory(auth());
   assert.equal(history.filter(event => event.id === newer.id).length, 1);
   assert.equal(history.some(event => event.id === older.id), true);
+
+  const canceled = { ...newer, id: 'evt_canceled_1', type: 'subscription.canceled', occurredAt: newer.occurredAt + 1 };
+  await service.processEvent({ event: canceled, signature: signBillingEvent(canceled, SIGNING_KEY) });
+  const invalidResurrection = {
+    ...newer,
+    id: 'evt_resurrection_1',
+    type: 'subscription.active',
+    occurredAt: canceled.occurredAt + 1,
+  };
+  await expectCode(service.processEvent({
+    event: invalidResurrection,
+    signature: signBillingEvent(invalidResurrection, SIGNING_KEY),
+  }), 'INVALID_TRANSITION');
 });
 
 test('rejects unauthorized tenant selection and fails closed on store errors', async () => {
@@ -188,4 +258,13 @@ test('rejects unauthorized tenant selection and fails closed on store errors', a
     trial: false,
     ignored: 'field',
   }), 'INVALID_INPUT');
+});
+
+test('requires a local database pool and safe application schema for persistent storage', async () => {
+  assert.throws(() => createPostgresBillingStore({ pool: {}, schemaName: 'safe_app' }), error =>
+    error instanceof BillingModuleError && error.code === 'INVALID_CONFIGURATION');
+  assert.throws(() => createPostgresBillingStore({
+    pool: { connect() {} },
+    schemaName: 'public',
+  }), error => error instanceof BillingModuleError && error.code === 'INVALID_CONFIGURATION');
 });
