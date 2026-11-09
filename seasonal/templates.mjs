@@ -92,7 +92,7 @@ export default function Home() {
     domain: 'noel-memory.example',
     description: 'Jeu de Memory de Noël mobile-first, jouable au clavier et au toucher.',
     page: String.raw`"use client";
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 type Card = { id: number; value: string; matched: boolean };
 
@@ -122,6 +122,7 @@ export default function Home() {
   const [locked, setLocked] = useState(false);
   const [message, setMessage] = useState('Trouvez toutes les paires de cartes de Noël.');
   const [reducedMotion, setReducedMotion] = useState(false);
+  const hideTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
@@ -130,6 +131,13 @@ export default function Home() {
     apply();
     media.addEventListener('change', apply);
     return () => media.removeEventListener('change', apply);
+  }, []);
+
+  useEffect(() => {
+    const timerRef = hideTimeout;
+    return () => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+    };
   }, []);
 
   const matchedPairs = useMemo(() => deck.filter(card => card.matched).length / 2, [deck]);
@@ -141,6 +149,10 @@ export default function Home() {
   }, [won]);
 
   const replay = () => {
+    if (hideTimeout.current !== null) {
+      clearTimeout(hideTimeout.current);
+      hideTimeout.current = null;
+    }
     const nextRound = round + 1;
     setRound(nextRound);
     setDeck(createDeck(nextRound));
@@ -171,9 +183,10 @@ export default function Home() {
     }
     setMessage('Ce n\'est pas une paire, réessayez.');
     const delay = reducedMotion ? 120 : 620;
-    setTimeout(() => {
+    hideTimeout.current = setTimeout(() => {
       setOpenCards([]);
       setLocked(false);
+      hideTimeout.current = null;
     }, delay);
   };
 
@@ -193,7 +206,7 @@ export default function Home() {
           <span><b>État</b> : {won ? 'Victoire' : 'En cours'}</span>
         </div>
         <p className="memory-status" role="status" aria-live="polite">{message}</p>
-        <div className="memory-grid" role="grid" aria-label="Grille Memory de Noël">
+        <div className="memory-grid" role="group" aria-label="Cartes du Memory de Noël">
           {deck.map((card, index) => {
             const visible = card.matched || openCards.includes(card.id);
             return (
@@ -247,7 +260,7 @@ const shuffleWithSeed = (items, seed) => {
 test('noel-memory page advertises an accessible christmas memory game', () => {
   assert.match(page, /Noël Memory/);
   assert.match(page, /aria-live="polite"/);
-  assert.match(page, /role="grid"/);
+  assert.match(page, /role="group"/);
   assert.match(page, /Rejouer/);
   assert.doesNotMatch(page, /fetch\(|XMLHttpRequest|localStorage|sessionStorage|process\.env/);
 });

@@ -32,6 +32,7 @@ Pour Noël Memory :
 
 ```sh
 cd /tmp/mes-apps/noel-memory
+npm install --ignore-scripts --no-audit --no-fund
 node --test
 npm run typecheck
 npm run build

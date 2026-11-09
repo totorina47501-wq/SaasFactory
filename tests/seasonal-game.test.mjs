@@ -29,7 +29,9 @@ test('noel-memory deterministic vectors stay explicit for synthetic checks', () 
 test('noel-memory template stays offline and accessible by keyboard/touch', () => {
   const page = themes['noel-memory'].page;
   assert.match(page, /Noël Memory/);
-  assert.match(page, /role="grid"/);
+  assert.match(page, /role="group"/);
+  assert.match(page, /clearTimeout\(hideTimeout\.current\)/);
+  assert.match(page, /hideTimeout\.current = setTimeout/);
   assert.match(page, /aria-live="polite"/);
   assert.match(page, /Rejouer/);
   assert.match(page, /prefers-reduced-motion/);
