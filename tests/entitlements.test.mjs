@@ -120,6 +120,63 @@ test('preserves idempotent reservation retries when an override changes', async 
   assert.equal(retry.status, 'reserved');
 });
 
+test('rechecks feature and quota overrides atomically when a reservation commits', async () => {
+  const underlying = createMemoryEntitlementsStore();
+  let releaseReservation;
+  let reservationStarted;
+  const entered = new Promise(resolve => { reservationStarted = resolve; });
+  const gate = new Promise(resolve => { releaseReservation = resolve; });
+  const store = {
+    getOverride: input => underlying.getOverride(input),
+    setOverride: input => underlying.setOverride(input),
+    clearOverride: input => underlying.clearOverride(input),
+    async reserve(input) {
+      reservationStarted();
+      await gate;
+      return underlying.reserve(input);
+    },
+    consume: input => underlying.consume(input),
+    refund: input => underlying.refund(input),
+  };
+  const service = createEntitlementsService({
+    store,
+    resolveSubscription: async () => null,
+    authorizeOverride: async () => true,
+    clock: () => 1_800_000_000_000,
+  });
+  await service.setQuotaOverride(context(), 'api.requests', 10);
+  const reservation = service.reserve(context(), 'api.requests', 5, 'quota-override-race');
+  await entered;
+  await service.setQuotaOverride(context(), 'api.requests', 3);
+  releaseReservation();
+  await expectCode(reservation, 'LIMIT_EXCEEDED');
+
+  await service.setFeatureOverride(context(), 'ai.generation', true);
+  let resumeFeatureReservation;
+  let featureReservationStarted;
+  const featureEntered = new Promise(resolve => { featureReservationStarted = resolve; });
+  const featureGate = new Promise(resolve => { resumeFeatureReservation = resolve; });
+  const featureStore = {
+    ...underlying,
+    async reserve(input) {
+      featureReservationStarted();
+      await featureGate;
+      return underlying.reserve(input);
+    },
+  };
+  const featureService = createEntitlementsService({
+    store: featureStore,
+    resolveSubscription: async () => null,
+    authorizeOverride: async () => true,
+    clock: () => 1_800_000_000_000,
+  });
+  const featureReservation = featureService.reserve(context(), 'ai.tokens', 1, 'feature-override-race');
+  await featureEntered;
+  await featureService.setFeatureOverride(context(), 'ai.generation', false);
+  resumeFeatureReservation();
+  await expectCode(featureReservation, 'FEATURE_DISABLED');
+});
+
 test('starts a new quota window when billing renews and lowers caps on downgrade', async () => {
   const { service, subscriptions, setTime } = fixture({ planId: 'business' });
   await service.setQuotaOverride(context(), 'jobs.business-units', 100);
@@ -231,10 +288,12 @@ test('uses a tenant-scoped PostgreSQL transaction for atomic reservations', asyn
   const reservation = await store.reserve({
     tenantId: TENANT_A,
     quotaId: 'api.requests',
+    featureId: 'api.access',
+    baseAllowed: true,
     periodStartAt: 10,
     periodEndAt: 20,
     amount: 3,
-    limit: 10,
+    baseLimit: 10,
     idempotencyKey: 'postgres-reserve',
     reservationId,
     fingerprint: 'api.requests:10:20:3:10',

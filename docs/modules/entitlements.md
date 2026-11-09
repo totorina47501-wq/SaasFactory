@@ -113,6 +113,11 @@ try {
 }
 ```
 
+`check` convient à l'affichage et au précontrôle ; `reserve` est la décision
+finale pour l'opération. Il relit les overrides de flag et de quota sous le même
+verrou atomique que l'allocation, afin qu'une mise à jour concurrente ne valide
+pas une réservation avec une ancienne limite.
+
 L'identifiant d'idempotence est limité à 128 caractères ASCII sûrs et est
 scopé par tenant, quota et période. La même clé avec une autre requête échoue
 (`IDEMPOTENCY_CONFLICT`). Une réservation n'est jamais transférable à un autre

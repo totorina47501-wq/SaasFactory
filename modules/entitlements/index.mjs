@@ -121,7 +121,15 @@ export function createMemoryEntitlementsStore() {
         }
         const keyForUsage = usageKey(input.tenantId, input.quotaId, input.periodStartAt);
         const counters = usage.get(keyForUsage) ?? { used: 0, reserved: 0 };
-        if (counters.used + counters.reserved + input.amount > input.limit) fail('LIMIT_EXCEEDED');
+        const featureOverride = overrides.get(overrideKey(input.tenantId, input.featureId));
+        if (featureOverride && (featureOverride.kind !== 'feature' ||
+            typeof featureOverride.value !== 'boolean')) fail('UNAVAILABLE');
+        if (!(featureOverride?.value ?? input.baseAllowed)) fail('FEATURE_DISABLED');
+        const quotaOverride = overrides.get(overrideKey(input.tenantId, input.quotaId));
+        if (quotaOverride && (quotaOverride.kind !== 'quota' ||
+            !Number.isSafeInteger(quotaOverride.value) || quotaOverride.value < 0)) fail('UNAVAILABLE');
+        const limit = quotaOverride?.value ?? input.baseLimit;
+        if (counters.used + counters.reserved + input.amount > limit) fail('LIMIT_EXCEEDED');
         const reservation = Object.freeze({
           id: input.reservationId,
           quotaId: input.quotaId,
@@ -299,16 +307,16 @@ export function createEntitlementsService(configuration) {
       const now = validateNow(clock);
       const { planId, periodStartAt, periodEndAt } = await resolvePlan(context, now);
       const featureId = QUOTAS[quotaId].featureId;
-      if (!await featureEnabled(context, planId, featureId)) fail('FEATURE_DISABLED');
-      const limit = await quotaLimit(context, planId, quotaId);
       const fingerprint = `${quotaId}:${amount}`;
       return runStore(() => store.reserve({
         tenantId: context.tenantId,
         quotaId,
+        featureId,
+        baseAllowed: PLAN_FEATURES[planId][featureId],
         periodStartAt,
         periodEndAt,
         amount,
-        limit,
+        baseLimit: PLAN_QUOTAS[planId][quotaId],
         idempotencyKey,
         reservationId: randomUUID(),
         fingerprint,

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { runMigrations } from '../database/index.mjs';
+import { FEATURES, QUOTAS } from './contract.mjs';
 import { EntitlementsModuleError, fail } from './errors.mjs';
 
 const migration = Object.freeze({
@@ -123,9 +124,34 @@ async function transaction(pool, schema, tenantId, operation) {
   }
 }
 
-async function lockQuota(client, tenantId, quotaId, periodStartAt) {
-  const key = `${tenantId}:entitlements:${quotaId}:${periodStartAt}`;
+async function lockQuota(client, tenantId, quotaId) {
+  const key = `${tenantId}:entitlements:${quotaId}`;
   await client.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', [tenantId, key]);
+}
+
+async function lockOverrideScope(client, tenantId, targetId) {
+  if (Object.hasOwn(QUOTAS, targetId)) {
+    await lockQuota(client, tenantId, targetId);
+    return;
+  }
+  if (FEATURES.includes(targetId)) {
+    const quotaIds = Object.entries(QUOTAS)
+      .filter(([, definition]) => definition.featureId === targetId)
+      .map(([quotaId]) => quotaId)
+      .sort();
+    for (const quotaId of quotaIds) await lockQuota(client, tenantId, quotaId);
+    return;
+  }
+  fail('INVALID_INPUT');
+}
+
+async function readOverride(client, tenantId, targetId) {
+  const result = await client.query(
+    `SELECT kind, override_value FROM entitlements_overrides
+     WHERE tenant_id = $1 AND target_id = $2`,
+    [tenantId, targetId],
+  );
+  return result.rows?.[0] ?? null;
 }
 
 async function readReservation(client, tenantId, reservationId, lock = false) {
@@ -188,11 +214,14 @@ export function createPostgresEntitlementsStore(configuration) {
       const tenantId = validateTenantId(value);
       validateStoreKey(targetId, ID_PATTERN);
       if (!['feature', 'quota'].includes(kind) ||
+          (kind === 'feature' && !FEATURES.includes(targetId)) ||
+          (kind === 'quota' && !Object.hasOwn(QUOTAS, targetId)) ||
           (kind === 'feature' && typeof overrideValue !== 'boolean') ||
           (kind === 'quota' && (!Number.isSafeInteger(overrideValue) || overrideValue < 0))) {
         fail('INVALID_INPUT');
       }
       return transaction(pool, schema, tenantId, async client => {
+        await lockOverrideScope(client, tenantId, targetId);
         await client.query(
           `INSERT INTO entitlements_overrides (tenant_id, target_id, kind, override_value)
            VALUES ($1, $2, $3, $4::jsonb)
@@ -208,6 +237,7 @@ export function createPostgresEntitlementsStore(configuration) {
       const tenantId = validateTenantId(value);
       validateStoreKey(targetId, ID_PATTERN);
       return transaction(pool, schema, tenantId, async client => {
+        await lockOverrideScope(client, tenantId, targetId);
         const result = await client.query(
           'DELETE FROM entitlements_overrides WHERE tenant_id = $1 AND target_id = $2',
           [tenantId, targetId],
@@ -219,17 +249,20 @@ export function createPostgresEntitlementsStore(configuration) {
     async reserve(input) {
       const tenantId = validateTenantId(input.tenantId);
       const quotaId = validateStoreKey(input.quotaId, QUOTA_PATTERN);
+      const featureId = validateStoreKey(input.featureId, ID_PATTERN);
       const idempotencyKey = validateStoreKey(input.idempotencyKey, ID_PATTERN);
       const reservationId = validateTenantId(input.reservationId);
-      if (!Number.isSafeInteger(input.periodStartAt) || input.periodStartAt < 0 ||
+      if (!Object.hasOwn(QUOTAS, quotaId) || QUOTAS[quotaId].featureId !== featureId ||
+          typeof input.baseAllowed !== 'boolean' ||
+          !Number.isSafeInteger(input.periodStartAt) || input.periodStartAt < 0 ||
           !Number.isSafeInteger(input.periodEndAt) || input.periodEndAt <= input.periodStartAt ||
           !Number.isSafeInteger(input.amount) || input.amount < 1 ||
-          !Number.isSafeInteger(input.limit) || input.limit < 0 ||
+          !Number.isSafeInteger(input.baseLimit) || input.baseLimit < 0 ||
           typeof input.fingerprint !== 'string' || input.fingerprint.length > 512) {
         fail('INVALID_INPUT');
       }
       return transaction(pool, schema, tenantId, async client => {
-        await lockQuota(client, tenantId, quotaId, input.periodStartAt);
+        await lockQuota(client, tenantId, quotaId);
         const previous = await reservationResult(
           client, tenantId, quotaId, input.periodStartAt, idempotencyKey,
         );
@@ -237,6 +270,17 @@ export function createPostgresEntitlementsStore(configuration) {
           if (previous.fingerprint !== input.fingerprint) fail('IDEMPOTENCY_CONFLICT');
           return reservationFromRow(previous);
         }
+        const featureOverride = await readOverride(client, tenantId, featureId);
+        if (featureOverride &&
+            (featureOverride.kind !== 'feature' || typeof featureOverride.override_value !== 'boolean')) {
+          fail('UNAVAILABLE');
+        }
+        if (!(featureOverride?.override_value ?? input.baseAllowed)) fail('FEATURE_DISABLED');
+        const quotaOverride = await readOverride(client, tenantId, quotaId);
+        if (quotaOverride &&
+            (quotaOverride.kind !== 'quota' || !Number.isSafeInteger(quotaOverride.override_value) ||
+             quotaOverride.override_value < 0)) fail('UNAVAILABLE');
+        const limit = quotaOverride?.override_value ?? input.baseLimit;
         await client.query(
           `INSERT INTO entitlements_usage
              (tenant_id, quota_id, period_start_at, period_end_at, used, reserved)
@@ -253,7 +297,7 @@ export function createPostgresEntitlementsStore(configuration) {
         if (!usage || databaseNumber(usage.period_end_at) !== input.periodEndAt) fail('UNAVAILABLE');
         const used = databaseNumber(usage.used);
         const reserved = databaseNumber(usage.reserved);
-        if (used + reserved + input.amount > input.limit) fail('LIMIT_EXCEEDED');
+        if (used + reserved + input.amount > limit) fail('LIMIT_EXCEEDED');
         await client.query(
           `UPDATE entitlements_usage SET reserved = reserved + $4
            WHERE tenant_id = $1 AND quota_id = $2 AND period_start_at = $3`,
@@ -281,7 +325,7 @@ export function createPostgresEntitlementsStore(configuration) {
         if (row.status === 'consumed') return reservationFromRow(row);
         if (row.status !== 'reserved') fail('RESERVATION_FINALIZED');
         const reservation = reservationFromRow(row);
-        await lockQuota(client, tenantId, reservation.quotaId, reservation.periodStartAt);
+        await lockQuota(client, tenantId, reservation.quotaId);
         const usageResult = await client.query(
           `SELECT reserved FROM entitlements_usage
            WHERE tenant_id = $1 AND quota_id = $2 AND period_start_at = $3 FOR UPDATE`,
@@ -313,7 +357,7 @@ export function createPostgresEntitlementsStore(configuration) {
         if (row.status === 'refunded') return reservationFromRow(row);
         if (!['reserved', 'consumed'].includes(row.status)) fail('UNAVAILABLE');
         const reservation = reservationFromRow(row);
-        await lockQuota(client, tenantId, reservation.quotaId, reservation.periodStartAt);
+        await lockQuota(client, tenantId, reservation.quotaId);
         const column = reservation.status === 'reserved' ? 'reserved' : 'used';
         const usageResult = await client.query(
           `SELECT ${column} AS amount FROM entitlements_usage
