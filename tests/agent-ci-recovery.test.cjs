@@ -105,7 +105,7 @@ test('workflow is failure-only, guarded, and checks out only trusted main with r
   assert.match(WORKFLOW, /contents: read/);
   assert.match(WORKFLOW, /concurrency:\s*\n\s+group: saas-factory-ci-recovery-\$\{\{ github\.event\.workflow_run\.pull_requests\[0\]\.number \|\| 'unassociated' \}\}/);
   const checkout = WORKFLOW.slice(WORKFLOW.indexOf('uses: actions/checkout@v4'), WORKFLOW.indexOf('uses: actions/github-script@v7'));
-  assert.match(checkout, /ref: main/);
+  assert.match(checkout, /ref: \\$\\{\\{ github\\.sha \\}\\}/);
   assert.match(checkout, /persist-credentials: false/);
   assert.doesNotMatch(checkout, /workflow_run\.head_sha|pull_request\.head\.sha/);
   assert.doesNotMatch(WORKFLOW, /^  pull_request(?:_target)?:/m);
