@@ -51,7 +51,7 @@ test('governance remains fail-closed, provider-off and market scores are weights
  assert.match(plan.guardrails.authorization,/coordinator|GitHub/i);
  assert.ok(plan.prioritization.constraints.every(x=>typeof x==='string'&&x.length>10));
  const w=plan.prioritization.weights;
- assert.deepEqual(Object.keys(w).sort(),['customerPain','distributionFit','operationalRisk','revenueEvidence','reuseOfFactory','timeToMvp']);
+ assert.deepEqual(Object.keys(w).sort(),['customerPain','distributionFit','operationalRisk','reuseOfFactory','revenueEvidence','timeToMvp']);
  assert.equal(Object.values(w).reduce((sum,n)=>sum+n,0),100);
  assert.ok(Object.values(w).every(n=>Number.isInteger(n)&&n>=0));
 });
