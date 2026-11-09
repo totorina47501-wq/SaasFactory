@@ -3,6 +3,11 @@ name: SaaS Factory agent dispatch
 # Keep dispatch bounded by the existing coordinator, capacity, and approvals.
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - SaaS Factory CI
+    types:
+      - completed
   schedule:
     - cron: '*/30 * * * *'
 permissions:
