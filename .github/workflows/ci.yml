@@ -22,6 +22,8 @@ jobs:
           node-version: '22'
       - name: Test versioned SaaS intake handoff offline
         run: node --test tests/intake.test.mjs
+      - name: Test runtime module contracts offline
+        run: node --test tests/runtime-contracts.test.mjs
       - name: Test standalone generator offline
         run: npm test
       - name: Test agent dispatch policy offline
