@@ -107,7 +107,7 @@ async function sync({graphql,core,apply=false}){
       if(row.content?.__typename==='PullRequest'){
         const c=row.content;
         if(!Number.isSafeInteger(c.number)||typeof c.repository?.nameWithOwner!=='string'||
-          !['OPEN','CLOSED'].includes(c.prState)||typeof c.merged!=='boolean'||
+          !['OPEN','CLOSED','MERGED'].includes(c.prState)||typeof c.merged!=='boolean'||
           !Array.isArray(c.labels?.nodes)||typeof c.labels?.pageInfo?.hasNextPage!=='boolean'||
           c.labels.pageInfo.hasNextPage||c.labels.nodes.some(label=>typeof label?.name!=='string')||
           !Array.isArray(c.closingIssuesReferences?.nodes)||
@@ -148,7 +148,7 @@ async function sync({graphql,core,apply=false}){
     if(c.__typename==='Issue') issues.set(c.number,c);
     if(c.__typename==='PullRequest'){
       pullRequests.set(c.number,c);
-      if(c.merged) for(const ref of c.closingIssuesReferences.nodes){
+      if(c.merged&&!dupes.has(`PullRequest:${c.number}`)) for(const ref of c.closingIssuesReferences.nodes){
         if(ref.repository?.nameWithOwner===REPO) deliveredIssues.add(ref.number);
       }
     }
