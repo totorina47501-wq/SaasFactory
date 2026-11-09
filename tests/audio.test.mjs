@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, lstat, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -295,7 +295,7 @@ test('enforces quota, retention, authorized deletion, and safe storage paths', a
   await expectCode(fixture.service.createTranscript({ ...auth(), audioId: audio.id }), 'QUOTA_EXCEEDED');
   now += 1000;
   assert.deepEqual(await fixture.service.purgeExpired(auth()), {
-    deletedAudio: 1, deletedTranscripts: 0, cleanedTemporaryFiles: 0,
+    deletedAudio: 1, deletedTranscripts: 0, cleanedTemporaryFiles: 0, cleanedOrphanFiles: 0,
   });
   await expectCode(fixture.service.readAudio({ ...auth(), audioId: audio.id }), 'NOT_FOUND');
 
@@ -307,6 +307,26 @@ test('enforces quota, retention, authorized deletion, and safe storage paths', a
     directory: linked, tenancy: tenancy(), audit: { append: async () => {} },
   }), error => error instanceof AudioModuleError && error.code === 'INVALID_PATH');
   assert.equal(await readFile(outside, 'utf8'), 'private');
+});
+
+test('purges abandoned source files left by interrupted publication after the temporary TTL', async t => {
+  let now = Date.now();
+  const fixture = await setup(t, {
+    clock: () => now,
+    limits: { jobTimeoutMs: 100, temporaryTtlMs: 200 },
+  });
+  const audio = await ingested(fixture.service);
+  const metadataPath = path.join(fixture.directory, 'sources', TENANT_A, `${audio.id}.json`);
+  const sourcePath = path.join(fixture.directory, 'sources', TENANT_A, `${audio.id}.source`);
+  await rm(metadataPath);
+  const old = new Date(now - 1000);
+  await utimes(sourcePath, old, old);
+
+  const purged = await fixture.service.purgeExpired(auth());
+  assert.deepEqual(purged, {
+    deletedAudio: 0, deletedTranscripts: 0, cleanedTemporaryFiles: 0, cleanedOrphanFiles: 1,
+  });
+  await assert.rejects(lstat(sourcePath), { code: 'ENOENT' });
 });
 
 test('deleting audio cascades to its transcripts and missing audits fail closed', async t => {

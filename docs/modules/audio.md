@@ -131,8 +131,11 @@ Codes stables : `INVALID_INPUT`, `INVALID_CONFIGURATION`, `INVALID_PATH`,
 
 `deleteAudio` supprime aussi les transcriptions liées ; `deleteTranscript`
 supprime uniquement une transcription. `purgeExpired` doit être appelé
-explicitement avec un contexte autorisé ; le service ne lance pas de rétention
-en arrière-plan. Les répertoires sont privés (`0700`) et les fichiers créés
+explicitement avec un contexte autorisé ; il renvoie les nombres de sources,
+transcriptions, temporaires et fichiers orphelins supprimés. Les sources ou
+sorties orphelines d'une interruption ne sont nettoyées qu'après le TTL
+temporaire. Le service ne lance pas de rétention en arrière-plan. Les répertoires
+sont privés (`0700`) et les fichiers créés
 lisibles uniquement par le propriétaire (`0600`). Le module ne fournit pas de
 chiffrement au repos, sauvegarde, antivirus, sandbox OS ni garantie d'effacement
 physique.

@@ -797,7 +797,11 @@ export async function createAudioService({
           ...transcript.metadata, version: transcript.metadata.version + 1,
           status: 'validated', validatedAt, updatedAt: validatedAt,
         };
-        await writeJson(transcript.filePath, updated, true);
+        await withQuotaLock(async () => {
+          await reserve(context.tenantId, 0, Buffer.byteLength(JSON.stringify(updated)) -
+            Buffer.byteLength(JSON.stringify(transcript.metadata)));
+          await writeJson(transcript.filePath, updated, true);
+        });
         return Object.freeze({ ...updated });
       });
     },
@@ -862,6 +866,7 @@ export async function createAudioService({
         let deletedAudio = 0;
         let deletedTranscripts = 0;
         let cleanedTemporaryFiles = 0;
+        let cleanedOrphanFiles = 0;
         const audioNames = await readdir(dirs.sources);
         for (const name of audioNames.filter(item => item.endsWith('.json'))) {
           const metadata = storedObject(await readJson(path.join(dirs.sources, name)), [
@@ -877,6 +882,41 @@ export async function createAudioService({
           if (metadata.expiresAt <= now()) {
             deletedTranscripts += await removeAudioFiles(context.tenantId, metadata.id);
             deletedAudio += 1;
+          }
+        }
+        const sourceNames = await readdir(dirs.sources);
+        const sourceSet = new Set(sourceNames);
+        const sourceIds = new Set();
+        for (const name of sourceNames) {
+          const match = /^([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.(json|source|normalized\.wav|normalized\.json)$/iu.exec(name);
+          if (!match) fail('UNSAFE_STORAGE');
+          sourceIds.add(match[1]);
+        }
+        const orphanNames = new Set();
+        for (const id of sourceIds) {
+          const hasSource = sourceSet.has(`${id}.source`);
+          const hasMetadata = sourceSet.has(`${id}.json`);
+          const hasNormalized = sourceSet.has(`${id}.normalized.wav`);
+          const hasNormalizedMetadata = sourceSet.has(`${id}.normalized.json`);
+          if (!hasMetadata) {
+            for (const name of [`${id}.source`, `${id}.normalized.wav`, `${id}.normalized.json`]) {
+              if (sourceSet.has(name)) orphanNames.add(name);
+            }
+            continue;
+          }
+          if (hasMetadata && !hasSource) fail('CORRUPT_STORAGE');
+          if (hasNormalized !== hasNormalizedMetadata) {
+            if (hasNormalized) orphanNames.add(`${id}.normalized.wav`);
+            if (hasNormalizedMetadata) orphanNames.add(`${id}.normalized.json`);
+          }
+        }
+        for (const name of orphanNames) {
+          const filePath = path.join(dirs.sources, name);
+          const info = await lstat(filePath);
+          if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0) fail('UNSAFE_STORAGE');
+          if (info.mtimeMs <= now() - limits.temporaryTtlMs) {
+            await unlink(filePath);
+            cleanedOrphanFiles += 1;
           }
         }
         for (const name of await readdir(dirs.transcripts)) {
@@ -904,7 +944,9 @@ export async function createAudioService({
             cleanedTemporaryFiles += 1;
           }
         }
-        return Object.freeze({ deletedAudio, deletedTranscripts, cleanedTemporaryFiles });
+        return Object.freeze({
+          deletedAudio, deletedTranscripts, cleanedTemporaryFiles, cleanedOrphanFiles,
+        });
       });
     },
   });
