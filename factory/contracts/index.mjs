@@ -211,6 +211,41 @@ function validateDescriptor(value) {
   }
 }
 
+// Snapshot untrusted descriptors without evaluating getters or preserving prototypes.
+// Validate the isolated data-only graph so no post-validation read can change it.
+function snapshotData(value, name = 'input', seen = new WeakSet()) {
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value)) fail('INVALID_INPUT', `${name} must not contain circular references`);
+  seen.add(value);
+  const isArray = Array.isArray(value);
+  const prototype = Object.getPrototypeOf(value);
+  if (isArray ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) {
+    fail('INVALID_INPUT', `${name} must contain only plain data`);
+  }
+  const own = Reflect.ownKeys(value);
+  if (isArray && (own.length !== value.length + 1 ||
+      !Array.from({ length: value.length }, (_, i) => Object.hasOwn(value, i)).every(Boolean))) {
+    fail('INVALID_INPUT', `${name} must be a dense array`);
+  }
+  const result = isArray ? [] : Object.create(null);
+  for (const key of own) {
+    if (isArray && key === 'length') continue;
+    const property = Object.getOwnPropertyDescriptor(value, key);
+    if (typeof key !== 'string' || !property.enumerable || !Object.hasOwn(property, 'value') || unsafeKeys.has(key)) {
+      fail('INVALID_INPUT', `${name} must contain only enumerable safe data fields`);
+    }
+    if (isArray && (!/^(0|[1-9]\\d*)$/u.test(key) || Number(key) >= value.length)) {
+      fail('INVALID_INPUT', `${name} must contain only indexed data fields`);
+    }
+    Object.defineProperty(result, key, {
+      value: snapshotData(property.value, `${name}.${key}`, seen),
+      enumerable: true, writable: true, configurable: true,
+    });
+  }
+  seen.delete(value);
+  return result;
+}
+
 function deepFreeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.freeze(value);
@@ -220,14 +255,16 @@ function deepFreeze(value) {
 }
 
 export function validateModuleDescriptor(value) {
-  validateDescriptor(value);
-  return deepFreeze(structuredClone(value));
+  const snapshot = snapshotData(value, 'ModuleDescriptor');
+  validateDescriptor(snapshot);
+  return deepFreeze(snapshot);
 }
 
 export function assertTenantContext(value) {
-  exactKeys(value, ['contractVersion', 'tenantId', 'requestId'], [], 'TenantContext');
-  if (value.contractVersion !== CONTRACT_VERSION) fail('INVALID_VERSION', 'TenantContext.contractVersion is unsupported');
-  text(value.tenantId, 'TenantContext.tenantId', 1, 128, /^[A-Za-z0-9][A-Za-z0-9_-]*$/u);
-  text(value.requestId, 'TenantContext.requestId', 1, 128, /^[A-Za-z0-9][A-Za-z0-9_-]*$/u);
-  return Object.freeze({ contractVersion: CONTRACT_VERSION, tenantId: value.tenantId, requestId: value.requestId });
+  const snapshot = snapshotData(value, 'TenantContext');
+  exactKeys(snapshot, ['contractVersion', 'tenantId', 'requestId'], [], 'TenantContext');
+  if (snapshot.contractVersion !== CONTRACT_VERSION) fail('INVALID_VERSION', 'TenantContext.contractVersion is unsupported');
+  text(snapshot.tenantId, 'TenantContext.tenantId', 1, 128, /^[A-Za-z0-9][A-Za-z0-9_-]*$/u);
+  text(snapshot.requestId, 'TenantContext.requestId', 1, 128, /^[A-Za-z0-9][A-Za-z0-9_-]*$/u);
+  return Object.freeze({ contractVersion: CONTRACT_VERSION, tenantId: snapshot.tenantId, requestId: snapshot.requestId });
 }
