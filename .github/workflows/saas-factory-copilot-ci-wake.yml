@@ -1,0 +1,75 @@
+name: SaaS Factory trusted Copilot PR CI wake
+# GitHub executes this only from the default branch; never check out PR code.
+on:
+  workflow_run:
+    workflows: ['SaaS Factory CI']
+    types: [completed]
+    branches:
+      - 'copilot/**'
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+concurrency:
+  group: saas-factory-copilot-pr-ci-wake
+  cancel-in-progress: false
+jobs:
+  wake:
+    if: >-
+      github.repository == 'totorina47501-wq/SaasFactory' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.repository.full_name == github.repository &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'copilot/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Authenticate PR and exact green CI before dispatch
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const {owner,repo} = context.repo, source = context.payload.workflow_run;
+            const identity = owner + '/' + repo;
+            if (!source || source.event !== 'pull_request' || source.conclusion !== 'success' ||
+                source.status !== 'completed' || source.repository?.full_name !== identity ||
+                source.head_repository?.full_name !== identity ||
+                !/^copilot\//.test(source.head_branch || '') ||
+                !/^[0-9a-f]{40}$/i.test(source.head_sha || '') ||
+                !Array.isArray(source.pull_requests) || source.pull_requests.length !== 1) {
+              throw new Error('Untrusted PR CI source');
+            }
+            const number = source.pull_requests[0].number;
+            if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid PR');
+            const [workflow, current, pr] = await Promise.all([
+              github.rest.actions.getWorkflow({owner,repo,workflow_id:source.workflow_id}),
+              github.rest.actions.getWorkflowRun({owner,repo,run_id:source.id}),
+              github.rest.pulls.get({owner,repo,pull_number:number})
+            ]);
+            const run = current.data, pull = pr.data;
+            if (workflow.data.path !== '.github/workflows/ci.yml' ||
+                workflow.data.name !== 'SaaS Factory CI' || workflow.data.state !== 'active' ||
+                run.id !== source.id || run.workflow_id !== source.workflow_id ||
+                run.event !== 'pull_request' || run.status !== 'completed' ||
+                run.conclusion !== 'success' || run.head_sha !== source.head_sha ||
+                run.head_branch !== source.head_branch ||
+                run.repository?.full_name !== identity || run.head_repository?.full_name !== identity ||
+                !Array.isArray(run.pull_requests) || run.pull_requests.length !== 1 ||
+                run.pull_requests[0].number !== number ||
+                pull.number !== number || pull.state !== 'open' || pull.merged === true ||
+                pull.head?.sha !== source.head_sha || pull.head?.ref !== source.head_branch ||
+                pull.head?.repo?.full_name !== identity || pull.base?.ref !== 'main' ||
+                pull.base?.repo?.full_name !== identity ||
+                !['copilot','copilot-swe-agent[bot]'].includes(
+                  String(pull.user?.login || '').toLowerCase())) {
+              core.notice('PR or CI changed; no privileged wake will be sent');
+              return;
+            }
+            // Dispatch is a signal only. The main-only coordinator revalidates
+            // catalog authorization, CI jobs, review threads, SHAs and scope.
+            await github.rest.actions.createWorkflowDispatch({
+              owner,repo,workflow_id:'saas-factory-agent-dispatch.yml',ref:'main'
+            });
+            core.info('Verified successful Copilot PR CI; coordinator woke');

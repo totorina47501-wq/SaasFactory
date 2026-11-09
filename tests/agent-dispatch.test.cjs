@@ -30,7 +30,7 @@ async function exercise(issues=[],prs=[],opts={}){
  const order=opts.order||[];
  const github={
    paginate:async(fn,arg)=>{order.push('github');if(fn===github.rest.issues.listForRepo)return issues;if(fn===github.rest.pulls.list)return prs;if(fn===github.rest.pulls.listFiles)return opts.files?.[arg.pull_number]||[];throw Error('unexpected paginate')},
-   rest:{issues:{listForRepo(){},get:async()=>({data:{assignees:opts.unconfirmed?[]:[{login:'copilot-swe-agent[bot]'}]}}),addLabels:async a=>{calls.push(['label',a]);}},pulls:{list(){},listFiles(){}}},
+   rest:{issues:{listForRepo(){},get:async()=>({data:{assignees:opts.unconfirmed?[]:[{login:'copilot-swe-agent[bot]'}]}}),addLabels:async a=>{calls.push(['label',a]);}},pulls:{list(){},listFiles(){}},actions:{createWorkflowDispatch:async a=>{calls.push(['wake',a]);}}},
    request:async(_url,args)=>{calls.push(['assign',args]);if(opts.fail)throw Error('assignment refused');}
  };
  const previous=process.env.EXPECTED_REPO;process.env.EXPECTED_REPO='totorina47501-wq/SaasFactory';
@@ -172,4 +172,42 @@ test('trusted post-main wake dispatches only after the exact green main push CI'
  const dispatch=fs.readFileSync(path.join(__dirname,'../.github/workflows/saas-factory-agent-dispatch.yml'),'utf8');
  assert.match(dispatch,/cron: '\*\/10 \* \* \* \*'/);
  assert.doesNotMatch(dispatch,/^  workflow_run:/m);
+});
+
+
+test('successful Copilot PR CI can wake only the verified main-only coordinator',()=>{
+ const path=require('node:path');
+ const wake=fs.readFileSync(path.join(__dirname,'../.github/workflows/saas-factory-copilot-ci-wake.yml'),'utf8');
+ const ci=fs.readFileSync(path.join(__dirname,'../.github/workflows/ci.yml'),'utf8');
+ assert.match(wake,/^  workflow_run:/m);
+ assert.match(wake,/workflows: \['SaaS Factory CI'\]/);
+ assert.match(wake,/types: \[completed\]/);
+ assert.match(wake,/- 'copilot\/\*\*'/);
+ assert.match(wake,/github\.event\.workflow_run\.event == 'pull_request'/);
+ assert.match(wake,/github\.event\.workflow_run\.conclusion == 'success'/);
+ assert.match(wake,/workflow\.data\.path !== '\.github\/workflows\/ci\.yml'/);
+ assert.match(wake,/run\.head_sha !== source\.head_sha/);
+ assert.match(wake,/pull\.head\?\.sha !== source\.head_sha/);
+ assert.match(wake,/createWorkflowDispatch/);
+ assert.match(wake,/^permissions:\s*\n  actions: write\n  contents: read\n  pull-requests: read/m);
+ assert.doesNotMatch(wake,/actions\/checkout|COPILOT_DISPATCH_TOKEN/);
+ assert.doesNotMatch(ci,/actions: write|COPILOT_DISPATCH_TOKEN/);
+});
+test('ready-for-review handoff emits exactly one subsequent trusted dispatch',async()=>{
+ const x=await exercise([],[],{orchestration:{run:async()=>({
+   decision:'prepared',prepared:[{pr:81,action:'ready-for-review'}],merged:[]
+ })}});
+ assert.equal(x.report.decision,'prepared:ready-for-review:#81');
+ assert.equal(x.report.reawakened,true);
+ const wakes=x.calls.filter(c=>c[0]==='wake');
+ assert.equal(wakes.length,1);
+ assert.equal(wakes[0][1].workflow_id,'saas-factory-agent-dispatch.yml');
+ assert.equal(wakes[0][1].ref,'main');
+});
+test('branch refresh never recursively dispatches before GitHub re-runs CI',async()=>{
+ const x=await exercise([],[],{orchestration:{run:async()=>({
+   decision:'prepared',prepared:[{pr:81,action:'branch-updated'}],merged:[]
+ })}});
+ assert.equal(x.report.decision,'prepared:branch-updated:#81');
+ assert.equal(x.calls.filter(c=>c[0]==='wake').length,0);
 });
