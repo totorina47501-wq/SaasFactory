@@ -377,11 +377,12 @@ export function createObservabilityService(options) {
       await rename(currentPath, archivePath).catch(() => fail('AUDIT_UNAVAILABLE'));
       await createAuditFile(currentPath);
     }
+    await pruneAuditFiles();
 
     let handle;
     try {
       handle = await open(currentPath, constants.O_WRONLY | constants.O_APPEND |
-        constants.O_NOFOLLOW, 0o600);
+        (constants.O_NOFOLLOW ?? 0), 0o600);
       await handle.writeFile(line, 'utf8');
       await handle.sync();
     } catch {
@@ -389,7 +390,6 @@ export function createObservabilityService(options) {
     } finally {
       await handle?.close().catch(() => {});
     }
-    await pruneAuditFiles();
     counters.audit_events_total += 1;
     return Object.freeze({ eventId: record.eventId, recordedAt });
   }
@@ -544,7 +544,7 @@ export function createObservabilityService(options) {
     createCleanupHandler() {
       return async ({ signal } = {}) => {
         if (signal?.aborted) fail('INTERRUPTED');
-          const result = await cleanup();
+        const result = await cleanup();
         return result;
       };
     },
