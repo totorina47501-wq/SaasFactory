@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
 const CONTRACT_VERSION = 1;
 const MODULE_VERSION = '1.0.0';
+const MAX_TRANSCRIPT_BYTES = 2 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const DEFAULTS = Object.freeze({
@@ -473,9 +474,9 @@ export async function createAudioService({
     const tempPath = path.join(temporaryRoot, `${randomUUID()}.json`);
     try {
       await writeFile(tempPath, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
-      if (replace) {
-        const info = await lstat(filePath).catch(() => null);
-        if (!info?.isFile() || info.isSymbolicLink()) fail('UNSAFE_STORAGE');
+      const info = await lstat(filePath).catch(() => null);
+      if (replace && (!info?.isFile() || info.isSymbolicLink()) || !replace && info) {
+        fail('UNSAFE_STORAGE');
       }
       await rename(tempPath, filePath);
     } catch (error) {
@@ -534,7 +535,7 @@ export async function createAudioService({
   async function getTranscript(tenantId, transcriptId) {
     const dirs = await tenantDirectories(tenantId);
     const filePath = path.join(dirs.transcripts, `${transcriptId}.json`);
-    const metadata = storedObject(await readJson(filePath, 2 * 1024 * 1024), [
+    const metadata = storedObject(await readJson(filePath, MAX_TRANSCRIPT_BYTES), [
       'contractVersion', 'id', 'tenantId', 'audioId', 'version', 'status', 'segments',
       'validatedAt', 'createdAt', 'updatedAt', 'expiresAt',
     ]);
@@ -561,7 +562,7 @@ export async function createAudioService({
     for (const name of await readdir(transcriptDir)) {
       if (!name.endsWith('.json')) continue;
       const filePath = path.join(transcriptDir, name);
-      const item = storedObject(await readJson(filePath, 2 * 1024 * 1024), [
+      const item = storedObject(await readJson(filePath, MAX_TRANSCRIPT_BYTES), [
         'contractVersion', 'id', 'tenantId', 'audioId', 'version', 'status', 'segments',
         'validatedAt', 'createdAt', 'updatedAt', 'expiresAt',
       ]);
@@ -601,6 +602,8 @@ export async function createAudioService({
         const createdAt = now();
         const expiresAt = createdAt + limits.retentionMs;
         if (!Number.isSafeInteger(expiresAt)) fail('TIME_RANGE');
+        let sourceWritten = false;
+        let metadataWritten = false;
         try {
           await writeFile(temporaryPath, audio, { flag: 'wx', mode: 0o600 });
           const raw = await runEngine(ffprobePath, [
@@ -621,15 +624,21 @@ export async function createAudioService({
             await reserve(context.tenantId, 2,
               audio.length + Buffer.byteLength(JSON.stringify(metadata)));
             if (input.signal?.aborted) fail('INTERRUPTED');
-            await rename(temporaryPath, sourcePath);
-            await writeFile(metadataPath, JSON.stringify(metadata), { flag: 'wx', mode: 0o600 });
+            await link(temporaryPath, sourcePath);
+            sourceWritten = true;
+            await unlink(temporaryPath);
+            await writeJson(metadataPath, metadata);
+            metadataWritten = true;
             if (input.signal?.aborted) fail('INTERRUPTED');
           });
           return Object.freeze({
             id, contractVersion: CONTRACT_VERSION, ...probe, sourceBytes: audio.length, expiresAt,
           });
         } catch (error) {
-          await Promise.all([unlink(temporaryPath), unlink(sourcePath), unlink(metadataPath)].map(
+          const cleanup = [unlink(temporaryPath)];
+          if (sourceWritten) cleanup.push(unlink(sourcePath));
+          if (metadataWritten) cleanup.push(unlink(metadataPath));
+          await Promise.all(cleanup.map(
             operation => operation.catch(() => {})));
           if (error instanceof AudioModuleError) throw error;
           fail('STORAGE_UNAVAILABLE');
@@ -775,6 +784,7 @@ export async function createAudioService({
           ...transcript.metadata, version: transcript.metadata.version + 1,
           status: 'draft', segments, validatedAt: null, updatedAt: now(),
         };
+        if (Buffer.byteLength(JSON.stringify(updated)) > MAX_TRANSCRIPT_BYTES) fail('INVALID_TRANSCRIPT');
         await withQuotaLock(async () => {
           await reserve(context.tenantId, 0, Buffer.byteLength(JSON.stringify(updated)) -
             Buffer.byteLength(JSON.stringify(transcript.metadata)));
@@ -797,6 +807,7 @@ export async function createAudioService({
           ...transcript.metadata, version: transcript.metadata.version + 1,
           status: 'validated', validatedAt, updatedAt: validatedAt,
         };
+        if (Buffer.byteLength(JSON.stringify(updated)) > MAX_TRANSCRIPT_BYTES) fail('INVALID_TRANSCRIPT');
         await withQuotaLock(async () => {
           await reserve(context.tenantId, 0, Buffer.byteLength(JSON.stringify(updated)) -
             Buffer.byteLength(JSON.stringify(transcript.metadata)));
@@ -869,7 +880,8 @@ export async function createAudioService({
         let cleanedOrphanFiles = 0;
         const audioNames = await readdir(dirs.sources);
         for (const name of audioNames.filter(item => item.endsWith('.json'))) {
-          const metadata = storedObject(await readJson(path.join(dirs.sources, name)), [
+          const metadataPath = path.join(dirs.sources, name);
+          const metadata = storedObject(await readJson(metadataPath), [
             'contractVersion', 'id', 'tenantId', 'mimeType', 'container', 'durationSeconds',
             'codec', 'sampleRate', 'channels', 'bitRate', 'sourceHash', 'sourceBytes',
             'createdAt', 'expiresAt',
@@ -879,9 +891,27 @@ export async function createAudioService({
               metadata.contractVersion !== CONTRACT_VERSION) {
             fail('CORRUPT_STORAGE');
           }
-          if (metadata.expiresAt <= now()) {
+          const sourcePath = path.join(dirs.sources, `${metadata.id}.source`);
+          const sourceInfo = await lstat(sourcePath).catch(error => {
+            if (error.code === 'ENOENT') return null;
+            fail('UNSAFE_STORAGE');
+          });
+          if (sourceInfo && (!sourceInfo.isFile() || sourceInfo.isSymbolicLink() ||
+              (sourceInfo.mode & 0o077) !== 0)) fail('UNSAFE_STORAGE');
+          const expired = metadata.expiresAt <= now();
+          const orphaned = !sourceInfo;
+          if (orphaned && !expired) {
+            const metadataInfo = await lstat(metadataPath);
+            if (metadataInfo.mtimeMs > now() - limits.temporaryTtlMs) fail('CORRUPT_STORAGE');
+          }
+          if (expired || orphaned) {
+            const filesBeforeCleanup = await readdir(dirs.sources);
+            const orphanFileCount = filesBeforeCleanup.filter(item =>
+              item === `${metadata.id}.json` || item === `${metadata.id}.source` ||
+              item === `${metadata.id}.normalized.wav` || item === `${metadata.id}.normalized.json`).length;
             deletedTranscripts += await removeAudioFiles(context.tenantId, metadata.id);
-            deletedAudio += 1;
+            if (expired) deletedAudio += 1;
+            else cleanedOrphanFiles += orphanFileCount;
           }
         }
         const sourceNames = await readdir(dirs.sources);
@@ -922,7 +952,7 @@ export async function createAudioService({
         for (const name of await readdir(dirs.transcripts)) {
           if (!name.endsWith('.json')) fail('CORRUPT_STORAGE');
           const filePath = path.join(dirs.transcripts, name);
-          const metadata = storedObject(await readJson(filePath, 2 * 1024 * 1024), [
+          const metadata = storedObject(await readJson(filePath, MAX_TRANSCRIPT_BYTES), [
             'contractVersion', 'id', 'tenantId', 'audioId', 'version', 'status', 'segments',
             'validatedAt', 'createdAt', 'updatedAt', 'expiresAt',
           ]);

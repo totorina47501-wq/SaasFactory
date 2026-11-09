@@ -258,6 +258,12 @@ test('edits versioned transcripts, enforces segment bounds, and blocks draft exp
     ...auth(), transcriptId: transcript.id, expectedVersion: 1,
     segments: [{ startSeconds: 0, endSeconds: 12.51, text: 'past end' }],
   }), 'INVALID_TRANSCRIPT');
+  const oversized = Array.from({ length: 250 }, (_, index) => ({
+    startSeconds: index * 0.05, endSeconds: (index + 1) * 0.05, text: '\ud800'.repeat(2000),
+  }));
+  await expectCode(fixture.service.editTranscript({
+    ...auth(), transcriptId: transcript.id, expectedVersion: 1, segments: oversized,
+  }), 'INVALID_TRANSCRIPT');
 
   const edited = await fixture.service.editTranscript({
     ...auth(), transcriptId: transcript.id, expectedVersion: 1, segments,
@@ -327,6 +333,21 @@ test('purges abandoned source files left by interrupted publication after the te
     deletedAudio: 0, deletedTranscripts: 0, cleanedTemporaryFiles: 0, cleanedOrphanFiles: 1,
   });
   await assert.rejects(lstat(sourcePath), { code: 'ENOENT' });
+
+  const secondAudio = await ingested(fixture.service);
+  const secondMetadataPath = path.join(
+    fixture.directory, 'sources', TENANT_A, `${secondAudio.id}.json`,
+  );
+  const secondSourcePath = path.join(
+    fixture.directory, 'sources', TENANT_A, `${secondAudio.id}.source`,
+  );
+  await rm(secondSourcePath);
+  const oldMetadata = new Date(now - 1000);
+  await utimes(secondMetadataPath, oldMetadata, oldMetadata);
+  assert.deepEqual(await fixture.service.purgeExpired(auth()), {
+    deletedAudio: 0, deletedTranscripts: 0, cleanedTemporaryFiles: 0, cleanedOrphanFiles: 1,
+  });
+  await assert.rejects(lstat(secondMetadataPath), { code: 'ENOENT' });
 });
 
 test('deleting audio cascades to its transcripts and missing audits fail closed', async t => {

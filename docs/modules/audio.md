@@ -100,7 +100,8 @@ contient exactement `startSeconds`, `endSeconds` et `text`. Le service fournit
 `validateTranscript` avec la même vérification de version. Les segments doivent
 être triés, non chevauchants, non vides, sans caractères de contrôle ou retours
 à la ligne, compris dans la durée et limités à 1000 segments / 2000 caractères
-par segment. Un conflit de version ou une donnée hors limites est refusé.
+par segment. La transcription sérialisée est aussi bornée à 2 MiB. Un conflit
+de version ou une donnée hors limites est refusé.
 Modifier un transcript validé le remet en brouillon.
 
 Les exports `exportSubtitles({…, transcriptId, format: 'srt' | 'vtt'})` ne sont
