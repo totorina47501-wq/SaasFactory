@@ -59,8 +59,17 @@ test('exposes simulated fixed plans and rejects unsupported input', async () => 
   assert.ok(plans.every(plan => plan.simulated === true));
   assert.equal(billingContract.version, 1);
   assert.equal(billingContract.provider, 'none');
-  await expectCode(service.startSubscription({ ...auth(), unknown: true }), 'INVALID_INPUT');
-  await expectCode(service.startSubscription({ ...auth(), planId: 'enterprise' }), 'INVALID_PLAN');
+  await expectCode(service.startSubscription({
+    ...auth(),
+    planId: 'pro',
+    idempotencyKey: 'unknown-field',
+    unknown: true,
+  }), 'INVALID_INPUT');
+  await expectCode(service.startSubscription({
+    ...auth(),
+    planId: 'enterprise',
+    idempotencyKey: 'invalid-plan',
+  }), 'INVALID_PLAN');
 });
 
 test('creates a trial subscription with demo invoice history and isolates tenants', async () => {
@@ -150,7 +159,10 @@ test('verifies local event signatures, deduplicates replay, and ignores reordere
   };
 
   const newerSignature = signBillingEvent(newer, SIGNING_KEY);
-  assert.equal((await service.processEvent({ event: newer, signature: newerSignature })).status, 'past_due');
+  assert.equal(
+    (await service.processEvent({ event: newer, signature: newerSignature })).subscription.status,
+    'past_due',
+  );
   assert.equal((await service.processEvent({ event: newer, signature: newerSignature })).duplicate, true);
   assert.equal((await service.processEvent({
     event: older,
