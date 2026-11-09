@@ -1,0 +1,103 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: local/${APP_SLUG:?Set an app-specific APP_SLUG}:runtime
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      APP_SLUG: ${APP_SLUG:?Set an app-specific APP_SLUG}
+      PORT: "3000"
+      MEDIA_ENABLED: ${MEDIA_ENABLED:-false}
+      LOCAL_MODEL_ENABLED: ${LOCAL_MODEL_ENABLED:-false}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-saas}:${POSTGRES_PASSWORD:?Set a local-only POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-saas}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - app_data:/app/storage
+    networks:
+      - local
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16.15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-saas}
+      POSTGRES_USER: ${POSTGRES_USER:-saas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a local-only POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - local
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  cache:
+    image: redis:7.4.2-alpine
+    profiles: ["cache"]
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "96mb", "--maxmemory-policy", "allkeys-lru"]
+    networks:
+      - local
+    mem_limit: 128m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  local-model:
+    image: ollama/ollama:0.12.6
+    profiles: ["local-model"]
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    volumes:
+      - model_data:/root/.ollama
+    networks:
+      - local
+    mem_limit: 2048m
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD", "ollama", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  app_data:
+  postgres_data:
+  model_data:
+
+networks:
+  local:
+    internal: true

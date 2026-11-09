@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+.runtime-secrets
+node_modules
+coverage
+.next/cache
+*.pem
+*.key
+*.p12
+*.pfx
+*.secret
+secrets/
+**/secrets/**
