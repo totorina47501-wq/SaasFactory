@@ -14,17 +14,10 @@ test('dispatch workflow isolates a user token from checkout and refuses missing 
  assert.doesNotMatch(checkout,/COPILOT_DISPATCH_TOKEN/);
  assert.match(workflow,/if:.*github\.repository == 'totorina47501-wq\/SaasFactory'.*github\.ref == 'refs\/heads\/main'/);
  assert.doesNotMatch(workflow,/^\s+pull_request(?:_target)?:/m);
- assert.match(workflow,/workflow_run:\s*\n\s+workflows: \['SaaS Factory CI', 'SaaS Factory trusted review signal'\]/);
- assert.match(workflow,/github\.event\.workflow_run\.event == 'pull_request'/);
- assert.match(workflow,/startsWith\(github\.event\.workflow_run\.head_branch, 'copilot\/'\)/);
- assert.match(workflow,/github\.event\.workflow_run\.name == 'SaaS Factory trusted review signal'/);
- assert.match(workflow,/github\.event\.workflow_run\.event == 'pull_request_review'/);
- assert.match(workflow,/types: \[completed\]/);
- assert.match(workflow,/github\.event\.workflow_run\.event == 'push'/);
- assert.match(workflow,/github\.event\.workflow_run\.head_branch == 'main'/);
- assert.match(workflow,/github\.event\.workflow_run\.head_sha == github\.sha/);
- assert.match(workflow,/github\.event\.workflow_run\.head_repository\.full_name == github\.repository/);
- assert.match(workflow,/github\.event\.workflow_run\.conclusion == 'success'/);
+ // Current policy uses scheduled/manual dispatch; the paid review trigger stays paused.
+ assert.match(workflow,/workflow_dispatch:/);
+ assert.match(workflow,/cron: '\\*\\/30 \\* \\* \\* \\*'/);
+ assert.doesNotMatch(workflow,/^\\s+workflow_run:/m);
  assert.match(workflow,/issues: read/);
  assert.match(workflow,/pull-requests: read/);
  assert.match(workflow,/cron: '\*\/10 \* \* \* \*'/);
@@ -131,7 +124,8 @@ test('assignment evidence requires a confirmed Copilot read-back',async()=>{
 
 test('review signal has no privileged credentials or untrusted checkout',()=>{
  const signal=fs.readFileSync(require('node:path').join(__dirname,'../.github/workflows/saas-factory-review-signal.yml'),'utf8');
- assert.match(signal,/pull_request_review:/);
+ assert.match(signal,/workflow_dispatch:/);
+ assert.doesNotMatch(signal,/^\\s+pull_request_review:/m);
  assert.match(signal,/permissions: \{\}/);
  assert.match(signal,/github\.event\.review\.user\.login == 'copilot-pull-request-reviewer/);
  assert.match(signal,/github\.event\.pull_request\.base\.ref == 'main'/);
