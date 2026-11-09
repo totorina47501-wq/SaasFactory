@@ -80,6 +80,9 @@ test('emits structured logs with correlation IDs and drops sensitive and non-all
   assert.equal(fixture.logs[0].requestId, REQUEST_A);
   assert.equal(fixture.logs[0].redactedFields, 5);
   assert.doesNotMatch(JSON.stringify(fixture.logs), /cookie-sentinel|person@example|2025550123|private .*sentinel/u);
+  assert.equal(fixture.service.metrics().counters.requests_total, 0);
+  assert.equal(fixture.service.recordRequest(), 1);
+  assert.equal(fixture.service.metrics().counters.requests_total, 1);
 
   await fixture.service.log({
     level: 'warn',
@@ -113,8 +116,17 @@ test('keeps liveness and readiness minimal when database or jobs checks fail', a
 });
 
 test('times out dependency checks without exposing errors or secrets', async t => {
+  let calls = 0;
+  let aborted = false;
   const fixture = await setup({
-    checks: { database: () => new Promise(() => {}) },
+    checks: {
+      database: ({ signal }) => {
+        calls += 1;
+        return new Promise(() => {
+          signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+        });
+      },
+    },
     limits: { checkTimeoutMs: 5 },
   });
   t.after(fixture.dispose);
@@ -123,6 +135,12 @@ test('times out dependency checks without exposing errors or secrets', async t =
     status: 'unavailable',
     checks: { database: 'unavailable' },
   });
+  assert.equal(aborted, true);
+  assert.deepEqual(await fixture.service.readiness(), {
+    status: 'unavailable',
+    checks: { database: 'unavailable' },
+  });
+  assert.equal(calls, 1);
 });
 
 test('tracks a bounded set of sanitized errors and metrics', async t => {

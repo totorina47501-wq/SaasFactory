@@ -54,18 +54,23 @@ remplacé par un UUID généré.
 
 `recordError({ code, requestId? })` conserve seulement un code stable au format
 `A-Z0-9_` et un ID de corrélation UUID. Toute autre valeur devient `OTHER`.
-`metrics()` expose des compteurs du processus et au plus `maxRecentErrors`
-entrées d'erreurs récentes ; ce stockage en mémoire est perdu au redémarrage.
+`recordRequest()` incrémente `requests_total` explicitement une fois par requête ;
+un appel à `log()` ne compte pas comme une requête. `metrics()` expose les
+compteurs du processus et au plus `maxRecentErrors` entrées d'erreurs récentes ;
+ce stockage en mémoire est perdu au redémarrage.
 
 ### Health checks et diagnostics
 
 - `liveness()` retourne seulement `{ status: "ok" }`.
 - `readiness()` appelle séquentiellement les fonctions `checks.database` et
-  `checks.jobs` configurées. Un résultat autre que `true`, une exception ou un
-  timeout donne `unavailable`, sans message technique. La limite par défaut est
-  1 seconde, configurable de 1 à 5 secondes. Sans contrôle configuré, la réponse
-  est prête avec un objet `checks` vide ; elle ne certifie pas les dépendances
-  qui n'ont pas été enregistrées.
+  `checks.jobs` configurées, chacune recevant `{ signal }`. Un résultat autre
+  que `true`, une exception ou un timeout donne `unavailable`, sans message
+  technique. Le module annule le signal au timeout ; tant qu'un contrôle qui
+  ignore le signal reste en attente, aucun appel chevauchant de ce contrôle
+  n'est lancé. La limite par défaut est 1 seconde, configurable de 1 à
+  5 secondes. Sans contrôle configuré, la réponse est prête avec un objet
+  `checks` vide ; elle ne certifie pas les dépendances qui n'ont pas été
+  enregistrées.
 - `environmentDiagnostics()` expose uniquement version Node, plateforme,
   architecture, un `NODE_ENV` parmi `development`, `test`, `production` et la
   durée du processus. Il ne retourne pas l'environnement complet.

@@ -255,6 +255,7 @@ export function createObservabilityService(options) {
   const counters = Object.fromEntries(METRICS.map(name => [name, 0]));
   const errors = [];
   const errorCodes = new Map();
+  const pendingChecks = new Map();
   const auditDirectory = path.join(options.directory, 'audit');
   let auditQueue = Promise.resolve();
 
@@ -519,16 +520,29 @@ export function createObservabilityService(options) {
     const results = {};
     for (const name of ['database', 'jobs']) {
       if (typeof checks[name] !== 'function') continue;
+      if (pendingChecks.has(name)) {
+        results[name] = 'unavailable';
+        continue;
+      }
       let timeout;
+      const controller = new AbortController();
+      const checkPromise = Promise.resolve().then(() =>
+        checks[name]({ signal: controller.signal }));
+      pendingChecks.set(name, checkPromise);
+      const clearPending = () => {
+        if (pendingChecks.get(name) === checkPromise) pendingChecks.delete(name);
+      };
+      checkPromise.then(clearPending, clearPending);
       try {
         const result = await Promise.race([
-          Promise.resolve().then(() => checks[name]()),
+          checkPromise,
           new Promise((_, reject) => {
             timeout = setTimeout(() => reject(new Error('timeout')), limits.checkTimeoutMs);
           }),
         ]);
         results[name] = result === true ? 'ok' : 'unavailable';
       } catch {
+        controller.abort();
         results[name] = 'unavailable';
       } finally {
         clearTimeout(timeout);
@@ -558,7 +572,6 @@ export function createObservabilityService(options) {
     },
     log(input) {
       const record = safeLogRecord(input);
-      counters.requests_total += 1;
       try {
         const result = writeLog(Object.freeze(record));
         if (result && typeof result.then === 'function') {
@@ -570,6 +583,10 @@ export function createObservabilityService(options) {
       }
     },
     recordError,
+    recordRequest() {
+      counters.requests_total += 1;
+      return counters.requests_total;
+    },
     metrics() {
       return Object.freeze({
         counters: Object.freeze({ ...counters }),
