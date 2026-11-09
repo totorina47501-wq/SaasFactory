@@ -110,7 +110,7 @@ test('rejects unknown fields, arbitrary templates and unsupported path or text e
 });
 
 test('enforces PDF page, text and byte budgets', () => {
-  const documents = service({ limits: {
+  const textLimited = service({ limits: {
     maxPdfPages: 1,
     maxPdfBytes: 100,
     maxTextCodeUnits: 16,
@@ -120,10 +120,24 @@ test('enforces PDF page, text and byte budgets', () => {
     maxOcrWorkingBytes: 3200,
     ocrTimeoutMs: 1000,
   } });
-  assert.throws(() => documents.exportPdf({
+  assert.throws(() => textLimited.exportPdf({
     title: 'A title',
     paragraphs: ['too much content'],
   }), { code: 'PDF_TEXT_LIMIT' });
+
+  const pageLimited = service({ limits: {
+    maxPdfPages: 1,
+  } });
+  assert.throws(() => pageLimited.exportPdf({
+    title: 'A title',
+    paragraphs: [Array(500).fill('line').join('\n')],
+  }), { code: 'PDF_PAGE_LIMIT' });
+
+  const byteLimited = service({ limits: { maxPdfBytes: 100 } });
+  assert.throws(() => byteLimited.exportPdf({
+    title: 'A title',
+    paragraphs: ['short but longer than the PDF budget'],
+  }), { code: 'PDF_TOO_LARGE' });
 });
 
 test('OCR is disabled unless an explicit engine is configured', async () => {

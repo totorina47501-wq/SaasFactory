@@ -261,7 +261,13 @@ function runTesseract(data, limits, languages) {
     });
     child.on('close', code => {
       if (code !== 0) finish(new DocumentsError('OCR_FAILED'));
-      else finish(undefined, Buffer.concat(chunks).toString('utf8'));
+      else {
+        try {
+          finish(undefined, new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+        } catch {
+          finish(new DocumentsError('OCR_FAILED'));
+        }
+      }
     });
     child.stdin.on('error', () => finish(new DocumentsError('OCR_FAILED')));
     child.stdin.end(data);
