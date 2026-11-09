@@ -143,9 +143,9 @@ test('malformed API responses are incomplete rather than empty success', async (
   assert.ok(result.report.errors.some(error => error.message.includes('workflow runs missing')));
 });
 
-test('workflow is scheduled six-hourly and grants only read permissions', () => {
+test('workflow is manually triggered while paused and grants only read permissions', () => {
   const workflow = fs.readFileSync(`${__dirname}/../.github/workflows/saas-factory-agent-report.yml`, 'utf8');
-  assert.match(workflow, /cron:\s*['"]0 0,6,12,18 \* \* \*['"]/);
+  assert.doesNotMatch(workflow, /^\s+schedule:/m);
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /actions:\s*read/);
   assert.match(workflow, /contents:\s*read/);

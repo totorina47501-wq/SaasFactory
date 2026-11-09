@@ -87,7 +87,9 @@ test('recovery requires exactly one valid specialist role', async () => {
 
 test('workflow is failure-only, guarded, and checks out only trusted main with read-only contents', () => {
   assert.match(WORKFLOW, /@copilot comment trigger is unverified/);
-  assert.match(WORKFLOW, /workflow_run:\s*\n\s+workflows: \["SaaS Factory CI"\]\s*\n\s+types: \[completed\]/);
+  // Paid AI recovery remains deliberately disabled while deterministic CI is restored.
+  assert.match(WORKFLOW, /workflow_dispatch:/);
+  assert.doesNotMatch(WORKFLOW, /^\\s+workflow_run:/m);
   assert.match(WORKFLOW, /github\.repository == 'totorina47501-wq\/SaasFactory'/);
   assert.match(WORKFLOW, /github\.event\.workflow_run\.conclusion == 'failure'/);
   assert.match(WORKFLOW, /vars\.SAAS_FACTORY_CI_RECOVERY_ENABLED == 'true'/);
