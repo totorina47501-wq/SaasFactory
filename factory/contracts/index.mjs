@@ -234,7 +234,7 @@ function snapshotData(value, name = 'input', seen = new WeakSet()) {
     if (typeof key !== 'string' || !property.enumerable || !Object.hasOwn(property, 'value') || unsafeKeys.has(key)) {
       fail('INVALID_INPUT', `${name} must contain only enumerable safe data fields`);
     }
-    if (isArray && (!/^(0|[1-9]\\d*)$/u.test(key) || Number(key) >= value.length)) {
+    if (isArray && (!/^(0|[1-9]\d*)$/u.test(key) || Number(key) >= value.length)) {
       fail('INVALID_INPUT', `${name} must contain only indexed data fields`);
     }
     Object.defineProperty(result, key, {
