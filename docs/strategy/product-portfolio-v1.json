@@ -1,0 +1,291 @@
+{
+  "schemaVersion": 1,
+  "name": "SaaSFactory Product Portfolio v1",
+  "ownerIssue": 113,
+  "lifecycle": [
+    "research",
+    "intake",
+    "build",
+    "quality",
+    "authorized-release",
+    "feedback",
+    "iterate-or-sunset"
+  ],
+  "guardrails": {
+    "generatedProductsInSeparateRepositories": true,
+    "aiProviderEnabledByDefault": false,
+    "paymentEnabledByDefault": false,
+    "socialPublishingEnabledByDefault": false,
+    "nativeStorePublishingEnabledByDefault": false,
+    "externalNetworkRequiredForPlanning": false,
+    "stageNeverImpliesProductionReady": true,
+    "authorization": "Existing GitHub coordinator, dependency graph, explicit approvals, capacity, SHA CI and branch protections remain binding."
+  },
+  "prioritization": {
+    "method": "CEO scorecard; score proposals with cited evidence, do not infer market results.",
+    "weights": {
+      "customerPain": 25,
+      "timeToMvp": 25,
+      "distributionFit": 20,
+      "reuseOfFactory": 15,
+      "revenueEvidence": 10,
+      "operationalRisk": 5
+    },
+    "maxTotal": 100,
+    "constraints": [
+      "No budget commitment without explicit owner approval.",
+      "Critical security/privacy/legal failures veto any numeric score.",
+      "No automatically created GitHub issue from an unverified comment."
+    ]
+  },
+  "families": [
+    {
+      "id": "seasonal-microapp",
+      "name": "Seasonal Mini-Apps",
+      "priority": "p0",
+      "wave": "now-november-2026",
+      "platforms": [
+        "web-mobile-first"
+      ],
+      "maturity": "prototype",
+      "issueRefs": [
+        111,
+        65,
+        71
+      ],
+      "examples": [
+        "Discount calculator for Black Friday",
+        "Christmas gift-budget planner",
+        "Event countdown utility"
+      ],
+      "monetization": [
+        "free",
+        "affiliate-optional-after-approval"
+      ],
+      "nextIncrement": "Validate generated web app build, mobile UX, domain and authorized publication; do not wait for the full starter.",
+      "gates": [
+        "real-domain-and-independent-repo",
+        "generated-app-tests-and-build",
+        "consumer-disclosures",
+        "sunset-or-maintenance-plan"
+      ]
+    },
+    {
+      "id": "web-saas",
+      "name": "B2B/B2C Web SaaS",
+      "priority": "p1",
+      "wave": "2026-q4",
+      "platforms": [
+        "web-responsive"
+      ],
+      "maturity": "scaffold",
+      "issueRefs": [
+        20,
+        21,
+        24,
+        29,
+        32,
+        52,
+        53,
+        54,
+        55,
+        56
+      ],
+      "examples": [
+        "Team workflow dashboard",
+        "Vertical operations suite",
+        "Creator subscription service"
+      ],
+      "monetization": [
+        "subscription-optional",
+        "usage-based-optional"
+      ],
+      "nextIncrement": "Finish integrated starter, end-to-end tenant security and release gates before production claims.",
+      "gates": [
+        "identity-and-tenant-isolation",
+        "real-billing-only-with-provider",
+        "end-to-end-functional-tests",
+        "deployment-rollback-evidence"
+      ]
+    },
+    {
+      "id": "ai-multimodal-saas",
+      "name": "AI SaaS (documents, audio, video, images, RAG)",
+      "priority": "p1",
+      "wave": "2026-q4-2027",
+      "platforms": [
+        "web-responsive",
+        "web-mobile-first"
+      ],
+      "maturity": "planned",
+      "issueRefs": [
+        34,
+        36,
+        37,
+        38,
+        39,
+        40,
+        42,
+        43,
+        46,
+        50,
+        52
+      ],
+      "examples": [
+        "Media compliance analysis category (MentionCheck-like, not copied)",
+        "Document research assistant",
+        "Audio/video content assistant"
+      ],
+      "monetization": [
+        "subscription-optional",
+        "usage-credits-optional"
+      ],
+      "nextIncrement": "Finish provider-optional model adapters, RAG privacy and quotas; generate reusable AI primitives rather than copying customer apps.",
+      "gates": [
+        "ai-opt-in",
+        "per-tenant-cost-caps",
+        "multimodal-content-safety",
+        "retrieval-acl-and-deletion",
+        "explainable-limitations",
+        "provider-entitlement-if-used"
+      ]
+    },
+    {
+      "id": "mobile-pwa",
+      "name": "Installable mobile-first web apps",
+      "priority": "p1",
+      "wave": "after-seasonal-web",
+      "platforms": [
+        "pwa-android",
+        "pwa-ios-browser"
+      ],
+      "maturity": "planned",
+      "issueRefs": [
+        20,
+        28,
+        44,
+        52,
+        53
+      ],
+      "examples": [
+        "Shopping planner PWA",
+        "Habit or event companion",
+        "Offline-lite utility"
+      ],
+      "monetization": [
+        "free",
+        "subscription-optional"
+      ],
+      "nextIncrement": "Add separately reviewed manifest, service worker, offline/updates, icon assets and device testing; responsive web alone is not a verified installable PWA.",
+      "gates": [
+        "offline-data-handling",
+        "service-worker-update-safety",
+        "mobile-keyboard-and-accessibility",
+        "device-compatibility-tests"
+      ]
+    },
+    {
+      "id": "casual-games",
+      "name": "HTML5 casual and seasonal games",
+      "priority": "p1",
+      "wave": "2026-november-december-prototype",
+      "platforms": [
+        "web-mobile-first",
+        "pwa-optional"
+      ],
+      "maturity": "not-implemented",
+      "issueRefs": [
+        111,
+        28,
+        53
+      ],
+      "examples": [
+        "Christmas memory pairs",
+        "Holiday quiz",
+        "Black Friday price guessing without real store claims"
+      ],
+      "monetization": [
+        "free",
+        "one-time-upgrade-optional",
+        "ads-optional-after-review"
+      ],
+      "nextIncrement": "Create an independent, offline-capable HTML5 game template and automated gameplay tests; avoid building a multiplayer/game platform first.",
+      "gates": [
+        "original-or-licensed-assets",
+        "deterministic-score-and-replay",
+        "touch-and-keyboard-controls",
+        "no-gambling-or-manipulative-monetization",
+        "game-state-privacy"
+      ]
+    },
+    {
+      "id": "native-mobile",
+      "name": "Native/hybrid iOS and Android applications",
+      "priority": "p2",
+      "wave": "after-market-validation",
+      "platforms": [
+        "android-native-or-hybrid",
+        "ios-native-or-hybrid"
+      ],
+      "maturity": "not-implemented",
+      "issueRefs": [
+        28,
+        53,
+        54,
+        55
+      ],
+      "examples": [
+        "Validated SaaS companion app",
+        "Reused seasonal mobile app after traction"
+      ],
+      "monetization": [
+        "subscription-optional",
+        "in-app-purchase-only-after-store-compliance"
+      ],
+      "nextIncrement": "Evaluate Capacitor versus React Native/Expo with shared logic, device CI, app signing and release review; no native build pipeline exists yet.",
+      "gates": [
+        "mobile-framework-selection",
+        "device-builds-and-tests",
+        "store-developer-accounts-and-signing",
+        "privacy-and-store-policy-review",
+        "crash-reporting-and-updates"
+      ]
+    },
+    {
+      "id": "marketplaces-creator-commerce",
+      "name": "Creator platforms and marketplaces",
+      "priority": "p2",
+      "wave": "after-core-saas",
+      "platforms": [
+        "web-responsive",
+        "mobile-pwa-optional"
+      ],
+      "maturity": "planned",
+      "issueRefs": [
+        24,
+        29,
+        32,
+        35,
+        41,
+        52,
+        54
+      ],
+      "examples": [
+        "Creator tools marketplace",
+        "Digital content storefront",
+        "Service directory"
+      ],
+      "monetization": [
+        "platform-commission-optional",
+        "subscription-optional"
+      ],
+      "nextIncrement": "Reuse tenant, billing simulation and API contracts; real marketplace payments/settlement, moderation and liability are separate workstreams.",
+      "gates": [
+        "user-generated-content-moderation",
+        "seller-and-buyer-rights",
+        "real-payment-regulatory-review",
+        "fraud-and-dispute-process"
+      ]
+    }
+  ]
+}
