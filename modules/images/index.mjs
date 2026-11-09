@@ -11,7 +11,7 @@ const DEFAULTS = Object.freeze({
   maxOutputBytes: 8 * 1024 * 1024,
   maxPixels: 8 * 1024 * 1024,
   maxDimension: 4096,
-  maxWorkingBytes: 272 * 1024 * 1024,
+  maxWorkingBytes: 288 * 1024 * 1024,
   maxInFlightBytes: 16 * 1024 * 1024,
   maxConcurrentUploads: 2,
   maxCarouselItems: 20,
@@ -70,6 +70,11 @@ function validateCompressionLevel(value) {
   if (value !== undefined && !safeInteger(value, 0, 9)) fail('INVALID_INPUT');
 }
 
+function validateSignal(signal) {
+  if (signal !== undefined && !(signal instanceof AbortSignal)) fail('INVALID_INPUT');
+  if (signal?.aborted) fail('INTERRUPTED');
+}
+
 function exactArray(value, maximumLength) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype ||
       value.length < 1 || value.length > maximumLength) fail('INVALID_INPUT');
@@ -104,7 +109,7 @@ function validateLimits(value = {}) {
   if (limits.maxInputBytes > limits.maxInFlightBytes ||
       limits.maxInFlightBytes < limits.maxInputBytes * limits.maxConcurrentUploads ||
       limits.maxWorkingBytes < limits.maxPixels * 32 +
-        limits.maxInputBytes + limits.maxOutputBytes) {
+        2 * limits.maxInputBytes + 2 * limits.maxOutputBytes) {
     fail('INVALID_CONFIGURATION');
   }
   return Object.freeze(limits);
@@ -379,7 +384,7 @@ export async function createImageService(options) {
   let reservedBytes = 0;
   let reservedWorkingBytes = 0;
   const workingReservation = limits.maxPixels * 32 +
-    limits.maxInputBytes + limits.maxOutputBytes;
+    2 * limits.maxInputBytes + 2 * limits.maxOutputBytes;
 
   function reserveWorkingSet() {
     if (reservedWorkingBytes + workingReservation > limits.maxWorkingBytes) {
@@ -391,11 +396,11 @@ export async function createImageService(options) {
     };
   }
 
-  async function getImage(input, reserved = false) {
+  async function getImage(input, reserved = false, includeStream = true) {
     const value = exactObject(input, [
       'cookieHeader', 'tenantId', 'requestId', 'objectId', 'signal',
     ], ['cookieHeader', 'tenantId', 'requestId', 'objectId']);
-    if (value.signal !== undefined && !(value.signal instanceof AbortSignal)) fail('INVALID_INPUT');
+    validateSignal(value.signal);
     const releaseWorkingSet = reserved ? () => {} : reserveWorkingSet();
     try {
       const exported = await storage.export({
@@ -411,7 +416,7 @@ export async function createImageService(options) {
         width: image.width,
         height: image.height,
         format: 'image/png',
-        stream: Readable.from([buffer]),
+        ...(includeStream ? { stream: Readable.from([buffer]) } : {}),
       });
     } finally {
       releaseWorkingSet();
@@ -425,7 +430,8 @@ export async function createImageService(options) {
     ], ['cookieHeader', 'tenantId', 'requestId', 'fileName', 'contentType', 'stream']);
     validateFileName(value.fileName);
     if (value.contentType !== 'image/png') fail('CONTENT_TYPE_MISMATCH');
-    if (value.signal !== undefined && !(value.signal instanceof AbortSignal)) fail('INVALID_INPUT');
+    validateSignal(value.signal);
+    if (!(value.stream instanceof Readable)) fail('INVALID_INPUT');
     validateResize(value.resize, limits);
     validateCompressionLevel(value.compressionLevel);
     if (activeUploads >= limits.maxConcurrentUploads ||
@@ -470,7 +476,7 @@ export async function createImageService(options) {
     ], [
       'cookieHeader', 'tenantId', 'requestId', 'objectId', 'width', 'height',
     ]);
-    if (value.signal !== undefined && !(value.signal instanceof AbortSignal)) fail('INVALID_INPUT');
+    validateSignal(value.signal);
     validateResize({ width: value.width, height: value.height }, limits);
     validateCompressionLevel(value.compressionLevel);
     const sourceId = validateImageId(value.objectId);
@@ -511,10 +517,11 @@ export async function createImageService(options) {
   async function createCarousel(input) {
     const value = exactObject(input, [
       'cookieHeader', 'tenantId', 'requestId', 'imageIds', 'activeIndex', 'signal',
-    ], ['cookieHeader', 'tenantId', 'requestId', 'imageIds'    ]);
-    if (value.signal !== undefined && !(value.signal instanceof AbortSignal)) fail('INVALID_INPUT');
+    ], ['cookieHeader', 'tenantId', 'requestId', 'imageIds']);
+    validateSignal(value.signal);
     const ids = exactArray(value.imageIds, limits.maxCarouselItems).map(validateImageId);
     if (new Set(ids).size !== ids.length) fail('INVALID_INPUT');
+    if (Object.hasOwn(value, 'activeIndex') && value.activeIndex === null) fail('INVALID_INPUT');
     const activeIndex = value.activeIndex ?? 0;
     if (!safeInteger(activeIndex, 0, ids.length - 1)) fail('INVALID_INPUT');
     const available = new Map((await storage.list(authFields(value))).map(item => [item.id, item]));
@@ -526,7 +533,7 @@ export async function createImageService(options) {
         ...authFields(value),
         objectId: id,
         signal: value.signal,
-      });
+      }, false, false);
       items.push(Object.freeze({
         ...metadata,
         width: image.width,

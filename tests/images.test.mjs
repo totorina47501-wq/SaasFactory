@@ -182,6 +182,14 @@ test('validates, decodes, resizes and compresses a local PNG before private tena
   }));
   assert.equal(duplicate.id, uploaded.id);
   assert.equal(duplicate.deduplicated, true);
+  for (const filter of [0, 2, 3, 4]) {
+    const filtered = await fixture.images.upload(uploadInput({
+      stream: Readable.from([png(4, 2, { colorType: 2, filter })]),
+      resize: { width: 2, height: 2 },
+      compressionLevel: 9,
+    }));
+    assert.equal(filtered.id, uploaded.id);
+  }
   assert.equal((await fixture.images.list(auth())).length, 1);
 
   const otherTenant = await fixture.images.upload(uploadInput({
@@ -310,7 +318,7 @@ test('reserves the processing memory budget before consuming concurrent uploads'
       maxOutputBytes: 256,
       maxPixels: 4,
       maxDimension: 4,
-      maxWorkingBytes: 640,
+      maxWorkingBytes: 1152,
       maxInFlightBytes: 512,
       maxConcurrentUploads: 2,
     },
@@ -322,4 +330,32 @@ test('reserves the processing memory budget before consuming concurrent uploads'
   await expectImageCode(fixture.images.upload(uploadInput()), 'IMAGE_BUSY');
   pending.end(png(1, 1));
   assert.equal((await firstUpload).width, 1);
+});
+
+test('cancellation interrupts stream processing and releases reserved memory', async t => {
+  const fixture = await setup({
+    imageLimits: {
+      maxInputBytes: 256,
+      maxOutputBytes: 256,
+      maxPixels: 4,
+      maxDimension: 4,
+      maxWorkingBytes: 1152,
+      maxInFlightBytes: 512,
+    },
+  });
+  t.after(fixture.dispose);
+  const source = new PassThrough();
+  const controller = new AbortController();
+  const interrupted = fixture.images.upload(uploadInput({
+    stream: source,
+    signal: controller.signal,
+  }));
+  await new Promise(resolve => setImmediate(resolve));
+  source.write(png(1, 1).subarray(0, 10));
+  controller.abort();
+  await expectImageCode(interrupted, 'INTERRUPTED');
+  const stored = await fixture.images.upload(uploadInput({
+    stream: Readable.from([png(1, 1)]),
+  }));
+  assert.equal(stored.width, 1);
 });
