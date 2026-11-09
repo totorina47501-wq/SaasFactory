@@ -49,6 +49,7 @@ function fixture({ authorize = async () => true, rateLimit = 120 } = {}) {
       return { items: [{ id: MEMBER, email: 'member@example.test', role: 'member' }], nextCursor: null };
     },
     webhookSecret: SECRET,
+    origin: 'http://localhost:3000',
     clock: () => now,
     rateLimit,
   });
@@ -64,7 +65,7 @@ async function createKey(service, scopes = ['members:read', 'webhooks:simulate',
   const result = await service.dispatch({
     method: 'POST',
     path: `/v1/tenants/${TENANT}/api-keys`,
-    headers: { cookie: 'session=valid' },
+    headers: { cookie: 'session=valid', origin: 'http://localhost:3000' },
     body: { name: 'local integration', scopes, expiresAt: null },
     requestId: 'key-create-1',
   });
@@ -85,6 +86,17 @@ test('exposes versioned routes and generates strict OpenAPI from the route catal
   assert.equal(document.components.schemas.ApiKeyCreateRequest.additionalProperties, false);
   assert.equal(document.components.schemas.ApiKeyCreateRequest.properties.scopes.uniqueItems, true);
   assert.equal(document.paths['/v1/webhooks/verify'].post.operationId, 'verifyWebhook');
+  const originParameter = document.paths['/v1/tenants/{tenantId}/api-keys'].post.parameters
+    .find(parameter => parameter.name === 'Origin');
+  assert.equal(originParameter.in, 'header');
+  assert.equal(originParameter.required, true);
+  const optionalOrigin = document.paths['/v1/tenants/{tenantId}/api-keys'].get.parameters
+    .find(parameter => parameter.name === 'Origin');
+  assert.equal(optionalOrigin.required, false);
+  assert.deepEqual(
+    document.components.schemas.WebhookSimulationRequest.properties.payload.type,
+    ['object', 'array', 'string', 'number', 'boolean', 'null'],
+  );
 });
 
 test('issues one-time random API keys, hashes their stored credentials, and lists only metadata', async () => {
@@ -96,7 +108,7 @@ test('issues one-time random API keys, hashes their stored credentials, and list
   const listed = await service.dispatch({
     method: 'GET',
     path: `/v1/tenants/${TENANT}/api-keys`,
-    headers: { cookie: 'session=valid' },
+    headers: { cookie: 'session=valid', origin: 'http://localhost:3000' },
   });
   assert.equal(listed.status, 200);
   assert.equal(Object.hasOwn(listed.body.items[0], 'token'), false);
@@ -142,12 +154,28 @@ test('checks current tenant permission, enforces pagination and tenant-scoped me
   assert.equal(deniedResponse.status, 403);
 });
 
+test('does not reuse quota reservations when clients repeat a request ID', async () => {
+  const { service, reservations } = fixture();
+  const key = await createKey(service, ['members:read']);
+  const before = reservations.length;
+  const request = {
+    method: 'GET',
+    path: `/v1/tenants/${TENANT}/members`,
+    headers: { authorization: 'Bearer ' + key.token },
+    requestId: 'client-reused-request-id',
+  };
+  assert.equal((await service.dispatch(request)).status, 200);
+  assert.equal((await service.dispatch(request)).status, 200);
+  assert.equal(reservations.length, before + 2);
+  assert.notEqual(reservations.at(-1), reservations.at(-2));
+});
+
 test('rejects unknown fields, invalid keys, wrong tenants, and revoked credentials', async () => {
   const { service } = fixture();
   const injected = await service.dispatch({
     method: 'POST',
     path: `/v1/tenants/${TENANT}/api-keys`,
-    headers: { cookie: 'session=valid' },
+    headers: { cookie: 'session=valid', origin: 'http://localhost:3000' },
     body: { name: 'key', scopes: ['members:read'], expiresAt: null, isAdmin: true },
   });
   assert.equal(injected.status, 400);
@@ -163,7 +191,7 @@ test('rejects unknown fields, invalid keys, wrong tenants, and revoked credentia
   const revoked = await service.dispatch({
     method: 'DELETE',
     path: `/v1/tenants/${TENANT}/api-keys/${key.id}`,
-    headers: { cookie: 'session=valid' },
+    headers: { cookie: 'session=valid', origin: 'http://localhost:3000' },
   });
   assert.equal(revoked.status, 200);
   const rejected = await service.dispatch({
@@ -173,6 +201,28 @@ test('rejects unknown fields, invalid keys, wrong tenants, and revoked credentia
   });
   assert.equal(rejected.status, 401);
   assert.equal(rejected.body.error.code, 'API_KEY_REVOKED');
+});
+
+test('requires an exact configured Origin for cookie-authenticated key management', async () => {
+  const { service } = fixture();
+  for (const origin of [undefined, 'http://attacker.localhost:3000']) {
+    const headers = { cookie: 'session=valid' };
+    if (origin !== undefined) headers.origin = origin;
+    const result = await service.dispatch({
+      method: 'POST',
+      path: `/v1/tenants/${TENANT}/api-keys`,
+      headers,
+      body: { name: 'csrf-attempt', scopes: ['members:read'], expiresAt: null },
+    });
+    assert.equal(result.status, 403);
+    assert.equal(result.body.error.code, 'ORIGIN_REJECTED');
+  }
+  const listed = await service.dispatch({
+    method: 'GET',
+    path: `/v1/tenants/${TENANT}/api-keys`,
+    headers: { cookie: 'session=valid' },
+  });
+  assert.equal(listed.status, 200);
 });
 
 test('persists rate-limit decisions through the store and rejects duplicate or malformed headers', async () => {
@@ -197,7 +247,7 @@ test('persists rate-limit decisions through the store and rejects duplicate or m
 });
 
 test('signs and verifies local webhook simulations once without accepting replays', async () => {
-  const { service } = fixture();
+  const { service, setTime } = fixture();
   const key = await createKey(service, ['webhooks:simulate', 'webhooks:verify']);
   const simulated = await service.dispatch({
     method: 'POST',
@@ -206,6 +256,7 @@ test('signs and verifies local webhook simulations once without accepting replay
     body: { event: 'member.created', payload: { memberId: MEMBER, nested: { ok: true } } },
   });
   assert.equal(simulated.status, 200);
+  setTime(simulated.body.timestamp + apiContract.maxWebhookSkewMs);
 
   const verifyRequest = {
     method: 'POST',
@@ -225,6 +276,11 @@ test('signs and verifies local webhook simulations once without accepting replay
     body: { ...simulated.body, payload: { memberId: 'attacker' } },
   });
   assert.equal(tampered.status, 400);
+  const tamperedEvent = await service.dispatch({
+    ...verifyRequest,
+    body: { ...simulated.body, event: 'member.deleted' },
+  });
+  assert.equal(tamperedEvent.status, 400);
 
   const forbidden = await service.dispatch({
     method: 'POST',

@@ -39,6 +39,7 @@ const ERRORS = Object.freeze({
   API_KEY_REVOKED: 401,
   API_KEY_EXPIRED: 401,
   FORBIDDEN: 403,
+  ORIGIN_REJECTED: 403,
   NOT_FOUND: 404,
   RATE_LIMITED: 429,
   FEATURE_DISABLED: 403,
@@ -230,14 +231,23 @@ export function createOpenApiDocument() {
       ],
       response: 'MemberPage',
     },
-    listApiKeys: { security: [{ cookieAuth: [] }], response: 'ApiKeyList' },
+    listApiKeys: {
+      security: [{ cookieAuth: [] }],
+      query: [{ name: 'Origin', in: 'header', required: false, schema: { type: 'string', format: 'uri' } }],
+      response: 'ApiKeyList',
+    },
     createApiKey: {
       security: [{ cookieAuth: [] }],
+      query: [{ name: 'Origin', in: 'header', required: true, schema: { type: 'string', format: 'uri' } }],
       request: 'ApiKeyCreateRequest',
       response: 'ApiKeyCreated',
       success: '201',
     },
-    revokeApiKey: { security: [{ cookieAuth: [] }], response: 'Revocation' },
+    revokeApiKey: {
+      security: [{ cookieAuth: [] }],
+      query: [{ name: 'Origin', in: 'header', required: true, schema: { type: 'string', format: 'uri' } }],
+      response: 'Revocation',
+    },
     simulateWebhook: {
       security: [{ bearerAuth: [] }],
       request: 'WebhookSimulationRequest',
@@ -309,7 +319,7 @@ export function createOpenApiDocument() {
     WebhookSimulationRequest: {
       type: 'object', additionalProperties: false, required: ['event', 'payload'],
       properties: { event: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9._-]{0,127}$' },
-        payload: { type: 'object' } },
+        payload: { type: ['object', 'array', 'string', 'number', 'boolean', 'null'] } },
     },
     WebhookVerifyRequest: {
       type: 'object', additionalProperties: false,
@@ -318,7 +328,7 @@ export function createOpenApiDocument() {
         tenantId: { type: 'string', format: 'uuid' }, timestamp: { type: 'integer' },
         nonce: { type: 'string', pattern: '^[A-Za-z0-9_-]{22,86}$' },
         event: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9._-]{0,127}$' },
-        payload: { type: 'object' },
+        payload: { type: ['object', 'array', 'string', 'number', 'boolean', 'null'] },
         signature: { type: 'string', pattern: '^sha256=[a-f0-9]{64}$' },
       },
     },
@@ -327,7 +337,8 @@ export function createOpenApiDocument() {
       required: ['tenantId', 'event', 'timestamp', 'nonce', 'payload', 'signature'],
       properties: {
         tenantId: { type: 'string', format: 'uuid' }, event: { type: 'string' },
-        timestamp: { type: 'integer' }, nonce: { type: 'string' }, payload: { type: 'object' },
+        timestamp: { type: 'integer' }, nonce: { type: 'string' },
+        payload: { type: ['object', 'array', 'string', 'number', 'boolean', 'null'] },
         signature: { type: 'string' },
       },
     },
@@ -345,6 +356,9 @@ export function createOpenApiDocument() {
       schema: { type: 'string', format: 'uuid' },
     }));
     const operation = operations[route.operationId];
+    const errorContent = {
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
+    };
     paths[route.path] ??= {};
     paths[route.path][route.method] = {
       operationId: route.operationId,
@@ -360,15 +374,14 @@ export function createOpenApiDocument() {
           description: 'Successful response',
           content: { 'application/json': { schema: { $ref: `#/components/schemas/${operation.response}` } } },
         },
-        '400': { description: 'Invalid request', content: { 'application/json': {
-          schema: { $ref: '#/components/schemas/ErrorResponse' },
-        } } },
-        '401': { description: 'Authentication required or API key invalid' },
-        '403': { description: 'Permission or entitlement denied' },
-        '404': { description: 'Resource not found' },
-        '409': { description: 'Webhook replay rejected' },
-        '429': { description: 'Rate or quota limit exceeded' },
-        '503': { description: 'Local dependency unavailable' },
+        '400': { description: 'Invalid request', ...errorContent },
+        '401': { description: 'Authentication required or API key invalid', ...errorContent },
+        '403': { description: 'Permission or entitlement denied', ...errorContent },
+        '404': { description: 'Resource not found', ...errorContent },
+        '409': { description: 'Webhook replay rejected', ...errorContent },
+        '429': { description: 'Rate or quota limit exceeded', ...errorContent },
+        '500': { description: 'Unexpected local failure', ...errorContent },
+        '503': { description: 'Local dependency unavailable', ...errorContent },
       },
     };
   }
@@ -455,8 +468,8 @@ export function createMemoryApiStore() {
 
 export function createApiService(configuration) {
   exactObject(configuration,
-    ['store', 'auth', 'entitlements', 'authorize', 'listMembers', 'webhookSecret', 'clock', 'rateLimit'],
-    ['store', 'auth', 'entitlements', 'authorize', 'listMembers', 'webhookSecret']);
+    ['store', 'auth', 'entitlements', 'authorize', 'listMembers', 'webhookSecret', 'origin', 'clock', 'rateLimit'],
+    ['store', 'auth', 'entitlements', 'authorize', 'listMembers', 'webhookSecret', 'origin']);
   const { store, auth, entitlements, authorize, listMembers } = configuration;
   if (!store || KEY_STORE_METHODS.some(method => typeof store[method] !== 'function') ||
       !auth || typeof auth.currentUser !== 'function' ||
@@ -468,6 +481,23 @@ export function createApiService(configuration) {
   if (!(typeof webhookSecret === 'string' || Buffer.isBuffer(webhookSecret)) ||
       Buffer.byteLength(webhookSecret) < 32) fail('INVALID_CONFIGURATION');
   const secret = Buffer.from(webhookSecret);
+  const configuredOrigin = configuration.origin;
+  if (typeof configuredOrigin !== 'string' || configuredOrigin.length > 255) {
+    fail('INVALID_CONFIGURATION');
+  }
+  let parsedOrigin;
+  try {
+    parsedOrigin = new URL(configuredOrigin);
+  } catch {
+    fail('INVALID_CONFIGURATION');
+  }
+  const localHttp = parsedOrigin.protocol === 'http:' &&
+    ['localhost', '127.0.0.1', '[::1]'].includes(parsedOrigin.hostname);
+  if ((!localHttp && parsedOrigin.protocol !== 'https:') ||
+      parsedOrigin.origin !== configuredOrigin || parsedOrigin.username || parsedOrigin.password ||
+      parsedOrigin.pathname !== '/' || parsedOrigin.search || parsedOrigin.hash) {
+    fail('INVALID_CONFIGURATION');
+  }
   const clock = configuration.clock ?? Date.now;
   const rateLimit = configuration.rateLimit ?? 120;
   if (typeof clock !== 'function' || !Number.isSafeInteger(rateLimit) ||
@@ -483,7 +513,10 @@ export function createApiService(configuration) {
     if (allowed !== true) fail('FORBIDDEN');
   }
 
-  async function sessionActor(headers) {
+  async function sessionActor(headers, requireOrigin = false) {
+    if ((requireOrigin || headers.origin !== undefined) && headers.origin !== configuredOrigin) {
+      fail('ORIGIN_REJECTED');
+    }
     const cookieHeader = headers.cookie;
     if (typeof cookieHeader !== 'string' || cookieHeader.length > 8192) fail('INVALID_SESSION');
     let user;
@@ -560,9 +593,9 @@ export function createApiService(configuration) {
     if (allowed !== true) fail('RATE_LIMITED');
   }
 
-  function webhookSignature(tenantId, timestamp, nonce, payload) {
+  function webhookSignature(tenantId, timestamp, nonce, event, payload) {
     return createHmac('sha256', secret)
-      .update(`${tenantId}.${timestamp}.${nonce}.${payload}`, 'utf8')
+      .update(JSON.stringify([tenantId, timestamp, nonce, event, payload]), 'utf8')
       .digest('hex');
   }
 
@@ -570,7 +603,7 @@ export function createApiService(configuration) {
     const context = Object.freeze({ contractVersion: 1, tenantId, requestId });
     let reservation;
     try {
-      reservation = await entitlements.reserve(context, 'api.requests', 1, requestId);
+      reservation = await entitlements.reserve(context, 'api.requests', 1, `api-${randomUUID()}`);
       const result = await operation();
       await entitlements.consume(context, reservation.id);
       return result;
@@ -634,7 +667,7 @@ export function createApiService(configuration) {
       }
       if (keysPath && ['GET', 'POST'].includes(method)) {
         const tenantId = validateTenant(decodeURIComponent(keysPath[1]));
-        const actorId = await sessionActor(headers);
+        const actorId = await sessionActor(headers, method === 'POST');
         await requirePermission(actorId, tenantId, 'api.keys.manage');
         await enforceRequestAccess(
           tenantId, actorId, requestId, `api-session:${tenantId}:${actorId}`,
@@ -669,7 +702,7 @@ export function createApiService(configuration) {
         const tenantId = validateTenant(decodeURIComponent(keyPath[1]));
         const keyId = decodeURIComponent(keyPath[2]);
         if (!UUID_PATTERN.test(keyId)) fail('INVALID_INPUT');
-        const actorId = await sessionActor(headers);
+        const actorId = await sessionActor(headers, true);
         await requirePermission(actorId, tenantId, 'api.keys.manage');
         await enforceRequestAccess(
           tenantId, actorId, requestId, `api-session:${tenantId}:${actorId}`,
@@ -695,7 +728,7 @@ export function createApiService(configuration) {
         const payload = eventPayload(input.body.payload);
         const timestamp = validateNow(clock);
         const nonce = randomBytes(16).toString('base64url');
-        const signature = webhookSignature(tenantId, timestamp, nonce, payload);
+        const signature = webhookSignature(tenantId, timestamp, nonce, input.body.event, payload);
         const result = Object.freeze({
           tenantId, event: input.body.event, timestamp, nonce,
           payload: JSON.parse(payload), signature: `sha256=${signature}`,
@@ -716,13 +749,13 @@ export function createApiService(configuration) {
         const now = validateNow(clock);
         if (Math.abs(now - timestamp) > MAX_WEBHOOK_SKEW_MS) fail('INVALID_WEBHOOK');
         const payload = eventPayload(input.body.payload);
-        const expected = webhookSignature(tenantId, timestamp, nonce, payload);
+        const expected = webhookSignature(tenantId, timestamp, nonce, event, payload);
         const supplied = Buffer.from(signature.slice(7), 'hex');
         const actual = Buffer.from(expected, 'hex');
         if (!timingSafeEqual(supplied, actual)) fail('INVALID_WEBHOOK');
         const verified = await chargeRequest(tenantId, requestId, async () => {
           const accepted = await store.consumeWebhookReplay(
-            tenantId, nonce, timestamp + MAX_WEBHOOK_SKEW_MS, now,
+            tenantId, nonce, timestamp + MAX_WEBHOOK_SKEW_MS + 1, now,
           );
           if (accepted !== true) fail('WEBHOOK_REPLAYED');
           return Object.freeze({ verified: true, event });

@@ -29,6 +29,7 @@ const api = createApiService({
     await localTenantAuthorization({ actorId, tenantId, permission }),
   listMembers: async ({ tenantId, actorId, limit, cursor, requestId }) =>
     await tenancyMemberPage({ tenantId, actorId, limit, cursor, requestId }),
+  origin: 'http://localhost:3000',
   webhookSecret: process.env.LOCAL_WEBHOOK_SECRET,
 });
 ```
@@ -46,6 +47,13 @@ réutiliser la vérification d’appartenance/ACL de Tenancy, filtrer toutes les
 requêtes par tenant, et respecter la limite et le curseur reçus. Ces fonctions
 ne doivent jamais faire confiance à un `actorId`, rôle ou contexte fourni par
 un client. Le module rejette les schémas de réponse inattendus.
+
+`origin` est l’origine canonique exacte de l’application cliente (HTTPS, ou
+HTTP uniquement sur loopback local). Les mutations authentifiées par cookie
+exigent un en-tête `Origin` égal à cette valeur. Le GET de métadonnées accepte
+l’absence d’`Origin` pour les navigateurs same-origin, mais rejette toute
+valeur présente qui ne correspond pas. Les contrôles SameSite du cookie ne
+remplacent pas cette vérification CSRF.
 
 ## Routes REST v1 et OpenAPI
 
@@ -88,8 +96,9 @@ Le simulateur n’accepte aucun endpoint, URL, hôte, port ni callback réseau :
 une donnée comme `http://127.0.0.1` reste uniquement une donnée de payload et
 n’est jamais interprétée ou contactée. L’événement est un JSON de profondeur
 maximale 16 et de taille maximale 64 KiB, sérialisé canoniquement (clés
-triées). La signature est HMAC-SHA-256 du texte UTF-8
-`tenantId.timestamp.nonce.payloadCanonical`, préfixée par `sha256=`.
+triées). La signature est HMAC-SHA-256 du JSON UTF-8 produit par
+`JSON.stringify([tenantId, timestamp, nonce, event, payloadCanonical])`,
+préfixée par `sha256=`. Le tableau ordonné rend les champs non ambigus.
 
 La vérification compare les MAC en temps constant, n’accepte qu’un écart
 temporel maximal de cinq minutes, puis inscrit atomiquement
@@ -101,7 +110,7 @@ temporel maximal de cinq minutes, puis inscrit atomiquement
 
 Codes stables : `INVALID_INPUT`, `INVALID_CONFIGURATION`,
 `INVALID_SESSION`, `INVALID_API_KEY`, `API_KEY_REVOKED`, `API_KEY_EXPIRED`,
-`FORBIDDEN`, `NOT_FOUND`, `RATE_LIMITED`, `FEATURE_DISABLED`,
+`FORBIDDEN`, `ORIGIN_REJECTED`, `NOT_FOUND`, `RATE_LIMITED`, `FEATURE_DISABLED`,
 `LIMIT_EXCEEDED`, `INVALID_WEBHOOK`, `WEBHOOK_REPLAYED` et `UNAVAILABLE`.
 Les statuts HTTP correspondants sont définis par le module. Les erreurs
 inconnues et les erreurs des callbacks sont ramenées à `UNAVAILABLE`.
