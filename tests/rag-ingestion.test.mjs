@@ -81,15 +81,18 @@ function docx(text, extra = []) {
   ]);
 }
 
-function pdf(text) {
+function pdf(text, fillerCount = 0) {
   const stream = `BT (${text}) Tj ET`;
+  const firstObject = fillerCount + 1;
   const objects = [
-    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
-    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
-    '3 0 obj\n<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>\nendobj\n',
-    `4 0 obj\n<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream\nendobj\n`,
+    ...Array.from({ length: fillerCount }, (_, index) =>
+      `${index + 1} 0 obj\n<< /Info (synthetic ${index}) >>\nendobj\n`),
+    `${firstObject} 0 obj\n<< /Type /Catalog /Pages ${firstObject + 1} 0 R >>\nendobj\n`,
+    `${firstObject + 1} 0 obj\n<< /Type /Pages /Kids [${firstObject + 2} 0 R] /Count 1 >>\nendobj\n`,
+    `${firstObject + 2} 0 obj\n<< /Type /Page /Parent ${firstObject + 1} 0 R /Contents ${firstObject + 3} 0 R >>\nendobj\n`,
+    `${firstObject + 3} 0 obj\n<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream\nendobj\n`,
   ];
-  return Buffer.from(`%PDF-1.4\n${objects.join('')}trailer\n<< /Root 1 0 R >>\n%%EOF\n`);
+  return Buffer.from(`%PDF-1.4\n${objects.join('')}trailer\n<< /Root ${firstObject} 0 R >>\n%%EOF\n`);
 }
 
 function createService({ limits, clock = () => 1000 } = {}) {
@@ -184,7 +187,7 @@ test('extracts bounded DOCX text and page metadata from a synthetic local ZIP', 
 
 test('extracts PDF text with source page metadata and rejects malformed PDFs', async () => {
   const { service } = createService();
-  const document = await service.ingest(input(pdf('Local PDF text'), {
+  const document = await service.ingest(input(pdf('Local PDF text', 200), {
     format: 'pdf',
     fileName: 'guide.pdf',
   }));

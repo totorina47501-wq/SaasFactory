@@ -238,18 +238,17 @@ function extractPdf(bytes, limits) {
     const match = objectStart.exec(source);
     if (!match) break;
     const bodyStart = objectStart.lastIndex;
-    const streamMatch = /\bstream(?:\r\n|\n|\r)/gu;
-    streamMatch.lastIndex = bodyStart;
-    const stream = streamMatch.exec(source);
     const endObject = source.indexOf('endobj', bodyStart);
     if (endObject < 0) fail('INVALID_DOCUMENT');
+    const objectBody = source.slice(bodyStart, endObject);
+    const stream = /\bstream(?:\r\n|\n|\r)/u.exec(objectBody);
     let body;
     let streamBytes;
-    if (stream && stream.index < endObject) {
-      const dictionary = source.slice(bodyStart, stream.index);
+    if (stream) {
+      const dictionary = objectBody.slice(0, stream.index);
       const length = /\/Length\s+(\d+)\b/u.exec(dictionary);
       if (!length) fail('INVALID_DOCUMENT');
-      const streamStart = streamMatch.lastIndex;
+      const streamStart = bodyStart + stream.index + stream[0].length;
       const streamLength = Number(length[1]);
       const streamEnd = streamStart + streamLength;
       if (!safeInteger(streamLength, 0, limits.maxExpandedBytes) ||
