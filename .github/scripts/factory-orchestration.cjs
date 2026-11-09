@@ -816,14 +816,14 @@ async function run({github, context, core, io = fs}) {
         if (!await dependenciesReady({
           github, owner, repo, task, tasks, issuesByNumber, allPrs, cache: dependencyCache
         })) {
-          if (detailedPr.draft) report.waiting.push({pr: pr.number, reason: 'dependencies-unverified'});
+          report.waiting.push({pr: pr.number, reason: 'dependencies-unverified'});
           continue;
         }
         const latestIssue = await github.rest.issues.get({owner, repo, issue_number: task.issue});
         if (!taskMatchesAuthorizedIssue(task, latestIssue.data)) {
           if (task.existingWork) {
             report.blockers.push(`existing-work-metadata:#${task.issue}/PR#${pr.number}`);
-          } else if (detailedPr.draft) {
+          } else {
             report.waiting.push({pr: pr.number, reason: 'issue-authorization-unverified'});
           }
           continue;
@@ -851,6 +851,9 @@ async function run({github, context, core, io = fs}) {
         })) {
           report.merged.push(pr.number);
           break;
+        }
+        if (!detailedPr.draft && /^copilot\\//.test(detailedPr.head?.ref || '')) {
+          report.waiting.push({pr: pr.number, reason: 'merge-evidence-or-protection-unverified'});
         }
       }
     }
