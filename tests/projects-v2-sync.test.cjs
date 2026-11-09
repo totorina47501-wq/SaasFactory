@@ -68,7 +68,7 @@ test('closed issue, merged PR, blocked label',()=>{
 
 test('planned issues use Backlog while report distinguishes planned from dependency waiting',async()=>{
   const completed=issue(17,[],'CLOSED');
-  const proof=pr(60,'CLOSED',true,[17]);
+  const proof=pr(60,'MERGED',true,[17]);
   const waiting=issue(51,['agent:planned'],'OPEN',[],null,'Files: .github/scripts/projects-v2-sync.cjs\nDepends-On: #17');
   const a=await run([row('a',completed,'Done'),row('b',proof,'Done'),row('c',waiting,'Backlog')]);
   assert.equal(a.result.cards.find(x=>x.key==='Issue:51').status,'planned');
@@ -78,6 +78,27 @@ test('planned issues use Backlog while report distinguishes planned from depende
   const b=await run([row('a',unresolved,'In Progress'),row('b',proof,'Done'),row('c',waiting,'Backlog')]);
   assert.equal(b.result.cards.find(x=>x.key==='Issue:51').status,'waiting');
   assert.equal(b.result.cards.find(x=>x.key==='Issue:51').dependencies[0].status,'open');
+});
+
+test('GraphQL MERGED PR state is accepted and preserves completed dependency evidence',async()=>{
+  const completed=issue(17,[],'CLOSED');
+  const proof=pr(60,'MERGED',true,[17]);
+  const waiting=issue(51,['agent:planned'],'OPEN',[],null,'Depends-On: #17');
+  const x=await run([row('a',completed,'Done'),row('b',proof,'Done'),row('c',waiting,'Backlog')]);
+  assert.equal(x.result.cards.find(c=>c.key==='PullRequest:60').status,'done');
+  assert.equal(x.result.cards.find(c=>c.key==='Issue:51').dependencyStatus,'ready');
+  assert.equal(x.result.cards.find(c=>c.key==='Issue:51').dependencies[0].status,'done');
+  assert.equal(x.writes.length,0);
+});
+
+test('duplicate merged PR cards cannot supply delivery evidence',async()=>{
+  const completed=issue(17,[],'CLOSED');
+  const proof=pr(60,'MERGED',true,[17]);
+  const waiting=issue(51,['agent:planned'],'OPEN',[],null,'Depends-On: #17');
+  const x=await run([row('a',completed,'Done'),row('b',proof,'Done'),row('c',proof,'Done'),row('d',waiting,'Backlog')]);
+  assert.deepEqual(x.result.duplicates,['PullRequest:60']);
+  assert.equal(x.result.cards.find(c=>c.key==='Issue:51').dependencyStatus,'waiting');
+  assert.equal(x.result.cards.find(c=>c.key==='Issue:51').dependencies[0].status,'unverified');
 });
 
 test('completed issue without merged closing PR is not a delivered dependency',async()=>{
