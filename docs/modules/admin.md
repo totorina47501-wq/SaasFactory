@@ -72,13 +72,14 @@ celui du membre connecté, pas un accès administrateur aux contenus ou aux boî
 des autres membres. Une source indisponible fait échouer toute la lecture avec
 `UNAVAILABLE`; aucune section partielle n'est présentée comme complète.
 
-Le consommateur d'interface gère l'état initial `loading`, l'état retourné
-`ready` et l'état `error` produit par un rejet (`AdminModuleError.code`). Il doit
-annoncer chargement et erreurs aux technologies d'assistance (par exemple,
-`aria-busy` et une région `aria-live`), conserver un ordre de focus prévisible et
-ne pas afficher de données périmées comme actuelles. Ce module fournit l'API
-serveur, pas une page React ni une route générée ; une intégration visuelle doit
-être réalisée et vérifiée dans le périmètre UI correspondant.
+`modules/admin/components/admin-dashboard.tsx` fournit `AdminDashboardView` avec
+états de chargement, erreur générique et réussite, ainsi que des intitulés,
+tableau accessible et action de reprise. Il ne crée pas de route. La page
+consommatrice doit fournir une Server Action qui lit la session côté serveur et
+appelle `getDashboard()` ; ne jamais envoyer le service, les cookies ou un rôle
+au navigateur. Les erreurs `AdminModuleError.code` ne doivent pas devenir du
+texte technique affiché. Vérifier l'ordre du focus dans l'application générée
+et ne pas afficher de données périmées comme actuelles.
 
 ## Erreurs et limites
 
@@ -101,7 +102,9 @@ node --test tests/admin.test.mjs
 npm test
 ```
 
-Les tests utilisent des doubles en mémoire et ne contactent aucun service distant.
+Les tests utilisent des doubles en mémoire et des assertions structurelles sur
+le composant accessible ; ils ne contactent aucun service distant et ne remplacent
+pas une vérification navigateur ou lecteur d'écran dans l'application générée.
 Le module n'ayant ni table ni migration, le rollback consiste à retirer sa
 composition et ses appels, sans modifier ou supprimer les données gérées par les
 modules délégués.

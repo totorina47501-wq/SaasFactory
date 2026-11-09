@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { AdminModuleError, adminContract, createAdminService } from '../modules/admin/index.mjs';
 
@@ -67,10 +68,16 @@ function fixture() {
     },
     async changeMemberRole(input) {
       calls.push(['changeMemberRole', input]);
+      if (input.memberId === OWNER) {
+        throw Object.assign(new Error('owner membership is protected'), { code: 'FORBIDDEN' });
+      }
       return { memberId: input.memberId, role: input.role };
     },
     async removeMember(input) {
       calls.push(['removeMember', input]);
+      if (input.memberId === OWNER) {
+        throw Object.assign(new Error('owner membership is protected'), { code: 'FORBIDDEN' });
+      }
       throw Object.assign(new Error('last administrator'), { code: 'LAST_ADMIN' });
     },
   };
@@ -174,6 +181,10 @@ test('enforces tenant membership and role restrictions before member administrat
 
 test('keeps owner invariants and tenancy errors intact without exposing error details', async () => {
   const { service } = fixture();
+  await expectCode(service.changeMemberRole({
+    ...input(), memberId: OWNER, role: 'member',
+  }), 'FORBIDDEN');
+  await expectCode(service.removeMember({ ...input(), memberId: OWNER }), 'FORBIDDEN');
   await assert.rejects(service.removeMember({ ...input(), memberId: ADMIN }), error => {
     assert.equal(error.code, 'LAST_ADMIN');
     assert.equal(error.message, 'LAST_ADMIN');
@@ -234,4 +245,18 @@ test('fails closed on unknown input and missing module dependencies', async () =
     jobs: {},
     notifications: {},
   }), error => error instanceof AdminModuleError && error.code === 'INVALID_CONFIGURATION');
+});
+
+test('provides accessible dashboard loading, error, and ready views', () => {
+  const component = readFileSync(
+    new URL('../modules/admin/components/admin-dashboard.tsx', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(component, /aria-busy=\{state\.status === "loading"\}/u);
+  assert.match(component, /aria-live="polite" role="status"/u);
+  assert.match(component, /<div role="alert">/u);
+  assert.match(component, /onClick=\{\(\) => void refresh\(\)\}/u);
+  assert.match(component, /<caption>/u);
+  assert.match(component, /<th scope="col">/u);
 });
