@@ -49,6 +49,11 @@ export class JobsModuleError extends Error {
   }
 }
 
+function validateJobId(value) {
+  if (typeof value !== 'string' || !UUID_PATTERN.test(value)) fail('INVALID_INPUT');
+  return value.toLowerCase();
+}
+
 function addTime(now, delayMs) {
   const result = now + delayMs;
   if (!Number.isSafeInteger(result)) fail('TIME_RANGE');
@@ -812,8 +817,9 @@ export function createJobsService(configuration) {
     async get(input) {
       exactInput(input, ['cookieHeader', 'tenantId', 'requestId', 'jobId']);
       const context = await authorizedContext(input);
+      const jobId = validateJobId(input.jobId);
       const { result } = await update(state => {
-        const job = state.jobs[input.jobId];
+        const job = state.jobs[jobId];
         if (!job || job.tenantId !== context.tenantId) fail('NOT_FOUND');
         return publicJob(job);
       });
@@ -842,8 +848,9 @@ export function createJobsService(configuration) {
     async cancel(input) {
       exactInput(input, ['cookieHeader', 'tenantId', 'requestId', 'jobId']);
       const context = await authorizedContext(input);
+      const jobId = validateJobId(input.jobId);
       const { result, events } = await update((state, emit) => {
-        const job = state.jobs[input.jobId];
+        const job = state.jobs[jobId];
         if (!job || job.tenantId !== context.tenantId) fail('NOT_FOUND');
         if (job.status === 'queued') {
           job.status = 'cancelled';
@@ -855,7 +862,7 @@ export function createJobsService(configuration) {
         }
         return publicJob(job);
       });
-      activeControllers.get(input.jobId)?.abort(new JobsModuleError('JOB_CANCELLED'));
+      activeControllers.get(jobId)?.abort(new JobsModuleError('JOB_CANCELLED'));
       publish(events);
       return result;
     },

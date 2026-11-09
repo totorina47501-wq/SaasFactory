@@ -88,6 +88,15 @@ test('rejects invalid tenant access, sensitive payload fields, accessors, and ov
   await expectCode(fixture.service.enqueue(enqueueInput({
     extra: 'unknown',
   })), 'INVALID_INPUT');
+  let coercionCalled = false;
+  const hostileId = {
+    [Symbol.toPrimitive]() {
+      coercionCalled = true;
+      return '11111111-1111-4111-8111-111111111111';
+    },
+  };
+  await expectCode(fixture.service.get({ ...auth(), jobId: hostileId }), 'INVALID_INPUT');
+  assert.equal(coercionCalled, false);
   await expectCode(fixture.service.enqueue(enqueueInput({
     ...auth(TENANT_B),
     cookieHeader: 'tenant-a',
