@@ -51,3 +51,41 @@ test('JSON and Markdown exports are deterministic, offline and draft-only',()=>{
   assert.throws(()=>exportAcquisitionMvp(p,'html'),/format/);
   assert.throws(()=>exportAcquisitionMvp({kind:'other'}),/draft/);
 });
+
+import {createGrowthSeoPreview,exportGrowthSeoPreview} from '../growth/acquisition/seo-preview.mjs';
+
+test('neutral SEO adapter reuses independent Growth MVP and FR/EN SEO #44',()=>{
+ const fr=createGrowthSeoPreview(raw,{startDate:'2026-11-09',locale:'fr-FR',origin:'https://factory.example'});
+ const en=createGrowthSeoPreview(raw,{startDate:'2026-11-09',locale:'en',origin:'https://factory.example'});
+ assert.equal(fr.kind,'saas-factory-growth-seo-preview');
+ assert.equal(fr.seoPages.length,3);
+ assert.ok(fr.seoPages.every(p=>p.status==='draft'&&!p.publicationAllowed&&
+  !p.claimsVerified&&!p.contentApproved));
+ assert.deepEqual(fr.seoPages.map(p=>p.publicRoute),['/','/features','/about']);
+ assert.equal(fr.seoPages[0].metadata.canonical,'https://factory.example/fr-FR');
+ assert.equal(en.seoPages[0].metadata.canonical,'https://factory.example/en');
+ assert.equal(fr.seoPages[0].metadata.alternates.languages.en,'https://factory.example/en');
+ assert.equal(fr.sitemap.length,8);
+ assert.ok(fr.robots.rules[0].disallow.includes('/dashboard'));
+ assert.equal(fr.collectionEnabled,false);
+ assert.equal(fr.publicationEnabled,false);
+ assert.equal(fr.analyticsStatus,'not-integrated');
+ assert.equal(fr.integration.automaticTracking,false);
+ assert.equal(fr.integration.automaticPublishing,false);
+});
+test('SEO bridge does not promote unchecked product claims, and exports only drafts',()=>{
+ const plan=createGrowthSeoPreview(raw,{startDate:'2026-11-09',locale:'fr-FR',origin:'https://factory.example'});
+ const meta=plan.seoPages[0].metadata;
+ assert.notEqual(meta.title,plan.seoPages[0].sourceDraftTitle);
+ assert.equal(meta.robots.index,true);
+ assert.deepEqual(JSON.parse(exportGrowthSeoPreview(plan)),plan);
+ assert.match(exportGrowthSeoPreview(plan,'markdown'),/No publishing/);
+ assert.throws(()=>exportGrowthSeoPreview(plan,'html'),/format/);
+ assert.throws(()=>exportGrowthSeoPreview({kind:'other'}),/draft/);
+});
+test('SEO bridge rejects malformed Intake, insecure origins and unsupported locales',()=>{
+ assert.throws(()=>createGrowthSeoPreview(raw,{startDate:'2026-11-09',origin:'http://factory.example'}),/HTTPS/);
+ assert.throws(()=>createGrowthSeoPreview(raw,{startDate:'2026-11-09',origin:'https://x:p@factory.example'}),/HTTPS/);
+ assert.throws(()=>createGrowthSeoPreview(raw,{startDate:'2026-11-09',locale:'es',origin:'https://factory.example'}),/locale/);
+ assert.throws(()=>createGrowthSeoPreview('{}',{startDate:'2026-11-09',origin:'https://factory.example'}));
+});

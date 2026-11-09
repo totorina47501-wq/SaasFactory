@@ -18,3 +18,15 @@ La livraison complète #65 demeure soumise aux dépendances #44 (SEO/i18n), #41 
 MentionCheck Project3 #102 pourra consommer ce contrat depuis un Intake MentionCheck validé, avec adaptation et vérification des affirmations propres au produit. Aucune fonctionnalité n'est déclarée automatiquement déployée dans Project3.
 
 Tester : npm test (tests/growth-acquisition.test.mjs et non-régressions existantes).
+
+## Adaptateur SEO neutre (suite du MVP, dépendance #44)
+
+Le fichier growth/acquisition/seo-preview.mjs constitue le pont de **prévisualisation hors réseau** avec modules/i18n-seo/index.mjs. Appel : createGrowthSeoPreview(rawIntake,{startDate,locale,origin}) puis exportGrowthSeoPreview(plan,'json' ou 'markdown').
+
+Ce pont associe les idées Growth problem / solution / demo aux pages **neutres** autorisées /, /features et /about du contrat SEO #44. Les métadonnées indexables produites sont génériques et ne reprennent pas les hypothèses ou promesses commerciales non vérifiées du produit. Les titres du brief sont conservés uniquement en brouillon interne, avec requiresReview=true, publicationAllowed=false et contentApproved=false.
+
+L'export comporte les huit URLs du sitemap public FR/EN, les directives robots de sécurité, les canonicals et alternates, ainsi que les indicateurs explicites : analytics non intégré, aucune collecte, aucune publication et aucun suivi automatique.
+
+**Ce n'est pas une intégration Next.js ni un déploiement.** Les vrais chemins d'URL et la traduction doivent être branchés par l'adaptateur de l'app générée, puis vérifiés en CI/E2E. Le marketing MentionCheck reste propre à Project3 #102. La livraison complète de #65 conserve ses dépendances #44 et #41.
+
+Tests supplémentaires : trois scénarios dans tests/growth-acquisition.test.mjs (FR/EN, séparation des affirmations non vérifiées, sécurité des origines et échecs fermés).
