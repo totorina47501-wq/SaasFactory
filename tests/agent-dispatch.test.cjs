@@ -16,7 +16,7 @@ test('dispatch workflow isolates a user token from checkout and refuses missing 
  assert.doesNotMatch(workflow,/^\s+pull_request(?:_target)?:/m);
  // Current policy uses scheduled/manual dispatch; the paid review trigger stays paused.
  assert.match(workflow,/workflow_dispatch:/);
- assert.match(workflow,/cron: '\\*\\/30 \\* \\* \\* \\*'/);
+ assert.ok(workflow.includes("cron: '*/30 * * * *'"));
  assert.doesNotMatch(workflow,/^\\s+workflow_run:/m);
  assert.match(workflow,/issues: read/);
  assert.match(workflow,/pull-requests: read/);
