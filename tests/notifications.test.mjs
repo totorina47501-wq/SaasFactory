@@ -69,10 +69,24 @@ async function setup({ limits = {}, jobsLimits = {}, clock = () => Date.now() } 
     limits,
     clock,
   });
+  const createNotifications = () => createNotificationsService({
+    directory: resolve(parent, 'notifications'),
+    auth: {
+      async currentUser({ cookieHeader }) {
+        const session = sessions[cookieHeader];
+        return session ? { id: session.userId } : null;
+      },
+    },
+    tenancy: tenantService,
+    jobs,
+    limits,
+    clock,
+  });
   return {
     parent,
     jobs,
     notifications,
+    createNotifications,
     async dispose() {
       await rm(parent, { recursive: true, force: true });
     },
@@ -104,6 +118,9 @@ test('escapes hostile email content and rejects unversioned or injected template
     '<main><h1>&lt;img src=x onerror=alert(1)&gt; &amp; &quot;</h1>' +
     '<p>&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;<br>&amp;</p></main>');
   assert.equal(rendered.text, `<script>alert('x')</script>\n&`);
+  assert.equal(renderEmailTemplate({
+    templateVersion: 1, subject: 'Long but bounded', body: 'x'.repeat(5000),
+  }).text.length, 5000);
   assert.throws(() => renderEmailTemplate({
     templateVersion: 1, subject: 'safe\r\nBcc: victim@example.test', body: 'body',
   }), error => error instanceof NotificationsModuleError && error.code === 'INVALID_TEMPLATE');
@@ -128,7 +145,8 @@ test('persists self-scoped tenant notifications and email previews idempotently'
     body: '<script>alert(1)</script>',
   });
   const first = await fixture.notifications.send(input);
-  const duplicate = await fixture.notifications.send(input);
+  const restored = await fixture.createNotifications();
+  const duplicate = await restored.send(input);
   assert.equal(first.id, duplicate.id);
   assert.equal(Object.hasOwn(first, 'email'), false);
   await expectCode(fixture.notifications.send(sendInput({ body: 'different body' })),
@@ -144,8 +162,9 @@ test('persists self-scoped tenant notifications and email previews idempotently'
     payload: { notificationId: first.id, tenantId: TENANT_A },
     tenantContext: { contractVersion: 1, tenantId: TENANT_B, requestId: 'request-1' },
   }), 'TENANT_ACCESS_DENIED');
-  assert.deepEqual((await fixture.notifications.list(auth())).map(item => item.id), [first.id]);
-  assert.equal((await fixture.notifications.list(auth('tenant-a-user-b'))).length, 0);
+  assert.deepEqual((await restored.list(auth())).map(item => item.id), [first.id]);
+  assert.equal((await restored.list(auth('tenant-a-user-b'))).length, 0);
+  assert.equal((await restored.listEmailInbox(auth('tenant-a-user-b'))).length, 0);
   await expectCode(fixture.notifications.list(auth('tenant-b-user-b')), 'TENANT_ACCESS_DENIED');
 
   await fixture.jobs.runOnce({ handlers: fixture.notifications.jobHandlers() });
@@ -177,6 +196,9 @@ test('honors preferences, read state, deletion, tenant isolation, and retention'
     emailEnabled: false,
   });
   const first = await fixture.notifications.send(sendInput());
+  const stored = JSON.parse(await readFile(
+    resolve(fixture.parent, 'notifications', 'notifications-v1.json'), 'utf8'));
+  assert.equal(stored.notifications[0].email, null);
   const read = await fixture.notifications.markRead({
     ...auth(), notificationId: first.id,
   });

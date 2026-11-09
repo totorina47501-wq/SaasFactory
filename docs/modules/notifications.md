@@ -109,12 +109,12 @@ erreurs ni journalisés par le module.
 ## Limites, conservation et exploitation
 
 Les limites par défaut sont de 10 000 notifications, 10 000 prévisualisations
-email, 16 MiB de JSON, 4 000 caractères par corps, 30 jours de conservation et
-5 secondes d'attente de verrou. Les valeurs sont configurables dans les bornes
-v1 ; les données expirées sont purgées à l'accès suivant ou par
-`purgeExpired()`. La suppression par l'utilisateur est logique afin de
-préserver la clé d'idempotence jusqu'à expiration ; l'email correspondant est
-retiré immédiatement.
+email, 16 MiB de JSON, 4 000 caractères par corps (configurable jusqu'à
+16 000), 30 jours de conservation et 5 secondes d'attente de verrou. Les valeurs
+sont configurables dans les bornes v1 ; les données expirées sont purgées à
+l'accès suivant ou par `purgeExpired()`. La suppression par l'utilisateur est
+logique afin de préserver la clé d'idempotence jusqu'à expiration ; l'email
+correspondant est retiré immédiatement.
 
 Le fichier local n'est pas une base multi-machine. N'utilisez pas le même
 répertoire depuis plusieurs hôtes, un montage réseau, ou comme remplacement

@@ -90,7 +90,7 @@ export function renderEmailTemplate(input) {
   if (input.templateVersion !== 1) fail('INVALID_TEMPLATE');
   const subject = validateText(input.subject, 160);
   if (/[\r\n]/u.test(subject)) fail('INVALID_TEMPLATE');
-  const body = validateText(input.body, DEFAULT_LIMITS.maxBodyChars);
+  const body = validateText(input.body, 16000);
   return Object.freeze({
     subject,
     text: body,
@@ -329,11 +329,6 @@ export async function createNotificationsService(configuration) {
       }
       const title = validateText(input.title, 160);
       const body = validateText(input.body, limits.maxBodyChars);
-      if (typeof accessInfo.member.email !== 'string' || accessInfo.member.email.length > 254 ||
-          !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(accessInfo.member.email) ||
-          /[\u0000-\u001f\u007f]/u.test(accessInfo.member.email)) {
-        fail('UNAVAILABLE');
-      }
       const requestHash = digest(JSON.stringify([title, body]));
       const keyHash = digest(`${accessInfo.tenantId}:${accessInfo.userId}:${input.idempotencyKey}`);
       const now = validateNow(clock);
@@ -348,6 +343,10 @@ export async function createNotificationsService(configuration) {
         }
         const preferences = getPreferences(state, accessInfo.tenantId, accessInfo.userId);
         if (!preferences.inAppEnabled && !preferences.emailEnabled) return null;
+        if (preferences.emailEnabled &&
+            (typeof accessInfo.member.email !== 'string' || accessInfo.member.email.length > 254 ||
+             !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(accessInfo.member.email) ||
+             /[\u0000-\u001f\u007f]/u.test(accessInfo.member.email))) fail('UNAVAILABLE');
         if (state.notifications.length >= limits.maxNotifications) fail('STORAGE_LIMIT');
         const expiresAt = now + limits.retentionMs;
         if (!Number.isSafeInteger(expiresAt)) fail('TIME_RANGE');
@@ -358,7 +357,7 @@ export async function createNotificationsService(configuration) {
           requestId: accessInfo.requestId,
           title,
           body,
-          email: accessInfo.member.email,
+          email: preferences.emailEnabled ? accessInfo.member.email : null,
           createdAt: now,
           expiresAt,
           readAt: null,
