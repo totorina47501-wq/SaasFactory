@@ -72,12 +72,12 @@ test('GitHub closing references are authoritative for hidden or additional missi
   }
 });
 
-test('newer review IDs break equal-timestamp verdict ties',async()=>{
+test('newer CHANGES_REQUESTED review IDs break equal-timestamp verdict ties',async()=>{
   const state=mergeMocks(), paginate=state.github.paginate;
   state.github.paginate=async(method,args)=>{
     const values=await paginate(method,args);
     if(method!==state.github.rest.pulls.listReviews)return values;
-    return [...values,{...values[0],id:9,body:'Changes recommended'}];
+    return [...values,{...values[0],id:9,state:'CHANGES_REQUESTED'}];
   };
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(state)),false);
 });
@@ -89,7 +89,7 @@ test('visible closure links survive fenced HTML markers and ordinary prose is ig
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(prose)),true);
 });
 
-test('a clean authenticated Copilot verdict without a file table can authorize a scoped change',async()=>{
+test('a paid Copilot verdict is not required when the trusted free-review job succeeds',async()=>{
   const clean=mergeMocks({reviewBody:'<!-- ccr-overview-v2 -->\n### 🟢 Approval recommended\n\n**No open issues** 🎉'});
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(clean)),true);
 });
@@ -116,9 +116,9 @@ test('effective final approval supersedes an older request by the same reviewer'
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(state)),true);
 });
 
-test('an explicit inability to review never becomes a positive attestation',async()=>{
+test('an inability to provide a paid review does not replace the free-review job',async()=>{
   const invalid=mergeMocks({reviewBody:"<!-- ccr-overview-v2 -->\n### 🟢 Approval recommended\nNo open issues\nCopilot wasn't able to review any files"});
-  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(invalid)),false);
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(invalid)),true);
 });
 
 test('optional owner notifications do not impose a human review on authorized automation',async()=>{
@@ -162,6 +162,7 @@ function orchestrationGithub({
       if (method === github.rest.pulls.listReviews) return reviews;
       if (method === github.rest.pulls.listReviewComments) return reviewComments;
       if (method === github.rest.actions.listWorkflowRuns) return ciContext(workflowRuns);
+      if (method === github.rest.actions.listJobsForWorkflowRun) return [{name:'Free deterministic PR review',status:'completed',conclusion:'success',run_id:args.run_id,head_sha:headSha}];
       throw new Error('unexpected paginate');
     },
     rest: {
@@ -203,7 +204,7 @@ function orchestrationGithub({
         }
       },
       actions: {
-        listWorkflowRuns() {},
+        listWorkflowRuns() {}, listJobsForWorkflowRun() {},
         getWorkflow: async () => ({data: {
           id: 12, path: orchestration.REQUIRED_WORKFLOW.path,
           name: orchestration.REQUIRED_WORKFLOW.name, state: 'active'
@@ -621,7 +622,7 @@ test('existing work with missing issue dependency metadata is reported as held',
   assert.deepEqual(report.blockers, [`existing-work-metadata:#${existing.issue}/PR#${existing.pullRequest}`]);
 });
 
-test('list summaries are detailed before a real-format COMMENTED review can authorize merge', async () => {
+test('list summaries are detailed before a trusted free-review job can authorize merge', async () => {
   const task = coordinatorTask();
   const workIssue = issue(task);
   const listSummary = {number: 45, body: 'Closes #17'};
@@ -637,27 +638,13 @@ test('list summaries are detailed before a real-format COMMENTED review can auth
     head: {ref: 'copilot/task-17', sha: headSha, repo: {full_name: orchestration.REPOSITORY}},
     user: {login: 'Copilot'}
   };
-  const review = {
-    id: 8,
-    state: 'COMMENTED',
-    user: {login: 'copilot-pull-request-reviewer[bot]'},
-    commit_id: headSha,
-    submitted_at: '2026-11-06T09:00:00Z',
-    body: `### ✅ Approval recommended
-
-**No open issues** 🎉
-
-| File | Description |
-| --- | --- |
-| \`${task.files[0]}\` | Reviewed on this commit. |`
-  };
   const result = orchestrationGithub({
     issues: [workIssue],
     openPrs: [listSummary],
     allPrs: [listSummary],
     detailedPrs: {45: detail},
     pullFiles: {45: [{filename: task.files[0]}]},
-    reviews: [review],
+    reviews: [],
     reviewComments: [],
     requestedReviewers: {users: [], teams: []}
   });
@@ -670,7 +657,7 @@ test('list summaries are detailed before a real-format COMMENTED review can auth
 function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflowId = 12,
   review = true, reviewBody, reviewHead = head, unresolved = false, changesRequested = false,
   pendingReviewRequest = false, lateReviewRequest = false, lateChangesRequested = false, changedFiles,
-  reportedChangedFiles, workflowRuns, lateWorkflowRuns, finalIssue, finalIssueAfterFirstRead,
+  reportedChangedFiles, workflowRuns, lateWorkflowRuns, freeReviewJobs, finalIssue, finalIssueAfterFirstRead,
   finalBase = mainSha, author = 'copilot-swe-agent[bot]', finalMain = mainSha,
   finalMainAfterFirstRead, finalState = 'open', reviewUser = 'copilot-pull-request-reviewer[bot]',
   branch = 'copilot/task-17', prBody = 'Closes #17', actualClosingIssues = [17]} = {}) {
@@ -707,8 +694,10 @@ ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}
   };
   const linkedIssue = issue(task);
   const github = {
-    paginate: async (method) => {
+    paginate: async (method, args) => {
       if (method === github.rest.pulls.listFiles) return fileEntries;
+      if (method === github.rest.actions.listJobsForWorkflowRun) return freeReviewJobs ??
+        [{name:'Free deterministic PR review',status:'completed',conclusion:'success',run_id:args.run_id,head_sha:head}];
       if (method === github.rest.actions.listWorkflowRuns) {
         ciCalls++;
         if (ciCalls > 1 && lateWorkflowRuns) return ciContext(lateWorkflowRuns);
@@ -758,7 +747,7 @@ ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}
             finalIssue || linkedIssue};
         }
       },
-      actions: {listWorkflowRuns() {}},
+      actions: {listWorkflowRuns() {}, listJobsForWorkflowRun() {}},
       repos: {getBranch: async () => {
         mainReadCalls++;
         return {data: {commit: {sha: mainReadCalls > 1 ? finalMainAfterFirstRead || finalMain : mainSha}}};
@@ -779,7 +768,7 @@ function mergeArgs(value) {
   };
 }
 
-test('merge requires authenticated CI and final review of changed files on the current head', async () => {
+test('merge requires authenticated CI and a successful free-review job on the current head', async () => {
   const valid = mergeMocks();
   assert.equal(await orchestration.mergeEligiblePullRequest({
     ...mergeArgs(valid)
@@ -791,11 +780,11 @@ test('merge requires authenticated CI and final review of changed files on the c
     {base: 'c'.repeat(40)},
     {state: 'dirty'},
     {ciWorkflowId: 99},
-    {review: false},
-    {reviewUser: 'someone-else[bot]'},
-    {reviewBody: 'Approval recommended\n\nNo open issues'},
-    {reviewBody: `Approval recommended\n\nNo open issues\n\n| File | Description |\n| --- | --- |\n| \`README.md\` | Not the changed file. |`},
-    {reviewHead: 'd'.repeat(40)},
+    {freeReviewJobs: []},
+    {freeReviewJobs: [{name: 'Free deterministic PR review', status: 'completed',
+      conclusion: 'success', run_id: 999, head_sha: headSha}]},
+    {freeReviewJobs: [{name: 'Free deterministic PR review', status: 'completed',
+      conclusion: 'success', run_id: 100, head_sha: 'd'.repeat(40)}]},
     {unresolved: true},
     {changesRequested: true},
     {pendingReviewRequest: true},
@@ -892,4 +881,96 @@ test('recovery attempts stop at two for one PR/SHA', () => {
   assert.equal(orchestration.retryAllowed(2), false);
   assert.equal(orchestration.retryAllowed(-1), false);
   assert.equal(orchestration.retryAllowed(1.5), false);
+});
+
+
+function completedAgentRun(state, overrides = {}) {
+  return {
+    id: 200, name: 'Running Copilot cloud agent', event: 'dynamic',
+    head_branch: state.pr.head.ref, head_sha: '1'.repeat(40),
+    repository: {full_name: orchestration.REPOSITORY},
+    head_repository: {full_name: orchestration.REPOSITORY},
+    actor: {login: 'Copilot'},
+    status: 'completed', conclusion: 'success',
+    created_at: '2026-11-09T11:00:00Z',
+    pull_requests: [{number: state.pr.number, head: {sha: state.pr.head.sha}}],
+    ...overrides
+  };
+}
+function copilotHandoffMocks(options = {}) {
+  const state = mergeMocks(options);
+  state.pr.draft = true;
+  const runs = options.agentRuns ?? [completedAgentRun(state)];
+  state.github.rest.actions.listWorkflowRunsForRepo = async () =>
+    ({data: {workflow_runs: runs}});
+  return state;
+}
+function handoffArgs(state) {
+  return {
+    github: state.github, owner: 'totorina47501-wq', repo: 'SaasFactory',
+    pr: state.pr, task: state.task, issue: state.linkedIssue,
+    workflow: state.workflow, mainSha
+  };
+}
+test('a completed authenticated Copilot session can refresh only its scoped stale branch', async () => {
+  const state = copilotHandoffMocks();
+  state.pr.base.sha = 'c'.repeat(40);
+  const originalGet = state.github.rest.pulls.get;
+  state.github.rest.pulls.get = async (...args) => {
+    const result = await originalGet(...args);
+    result.data.base.sha = state.pr.base.sha;
+    return result;
+  };
+  const updates = [];
+  state.github.rest.pulls.updateBranch = async args => {
+    updates.push(args);
+    return {status: 202};
+  };
+  assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(state)), 'branch-updated');
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].pull_number, state.pr.number);
+  assert.equal(updates[0].expected_head_sha, headSha);
+});
+test('unfinished, foreign or stale agent sessions never release a draft or refresh branch', async () => {
+  for (const agentRuns of [
+    [],
+    [{...completedAgentRun(copilotHandoffMocks()), status: 'in_progress', conclusion: null}],
+    [{...completedAgentRun(copilotHandoffMocks()), actor: {login: 'someone-else'}}],
+    [{...completedAgentRun(copilotHandoffMocks()), pull_requests: [{number: 99, head: {sha: headSha}}]}],
+    [{...completedAgentRun(copilotHandoffMocks()), pull_requests: [{number: 45, head: {sha: 'f'.repeat(40)}}]}]
+  ]) {
+    const state = copilotHandoffMocks({agentRuns});
+    state.pr.base.sha = 'c'.repeat(40);
+    assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(state)), null);
+  }
+});
+test('a verified free CI can automatically release a completed Copilot draft without a paid review', async () => {
+  const state = copilotHandoffMocks({review: false});
+  const original = state.github.graphql;
+  const mutations = [];
+  state.github.graphql = async (query, args) => {
+    if (query.startsWith('mutation(')) {
+      mutations.push(args);
+      return {markPullRequestReadyForReview: {pullRequest: {
+        id: 'PR_ABC', isDraft: false, headRefOid: headSha
+      }}};
+    }
+    const response = await original(query,args);
+    if (query.includes('id isDraft headRefOid')) {
+      response.repository.pullRequest.id = 'PR_ABC';
+      response.repository.pullRequest.isDraft = true;
+    }
+    return response;
+  };
+  assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(state)), 'ready-for-review');
+  assert.equal(mutations.length, 1);
+  assert.equal(mutations[0].id, 'PR_ABC');
+});
+test('draft handoff refuses CI failures, missing free-review jobs and out-of-scope files', async () => {
+  const failedCi = copilotHandoffMocks({ciWorkflowId: 99});
+  assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(failedCi)), null);
+  const missingFreeJob = copilotHandoffMocks({freeReviewJobs: []});
+  assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(missingFreeJob)), null);
+  const outOfScope = copilotHandoffMocks({changedFiles: ['README.md']});
+  assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(outOfScope)), null);
 });

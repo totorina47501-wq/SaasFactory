@@ -446,6 +446,27 @@ async function trustedCi(github, owner, repo, workflow, sha, number) {
     newestAttempt.status === 'completed' && newestAttempt.conclusion === 'success';
 }
 
+async function trustedFreeReview(github, owner, repo, workflow, sha, number) {
+  const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+    owner, repo, workflow_id: workflow.id, head_sha: sha, event: 'pull_request', per_page: 100
+  });
+  const relevant = runs.filter(run => run.workflow_id === workflow.id && run.head_sha === sha &&
+    run.event === 'pull_request' && run.repository?.full_name === REPOSITORY &&
+    run.head_repository?.full_name === REPOSITORY &&
+    Array.isArray(run.pull_requests) && run.pull_requests.length === 1 &&
+    run.pull_requests[0]?.number === number);
+  relevant.sort((a,b) => Date.parse(b.created_at)-Date.parse(a.created_at) || b.id-a.id);
+  const newest = relevant[0];
+  if (!newest || newest.status !== 'completed' || newest.conclusion !== 'success' ||
+    !Number.isSafeInteger(newest.id) || !Number.isSafeInteger(newest.run_attempt)) return false;
+  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+    owner, repo, run_id: newest.id, filter: 'latest', per_page: 100
+  });
+  return Array.isArray(jobs) && jobs.some(job => job.name === 'Free deterministic PR review' &&
+    job.status === 'completed' && job.conclusion === 'success' && job.run_id === newest.id &&
+    job.head_sha === sha);
+}
+
 function pendingAutomatedReview(requested) {
   // Owner notification requests are not branch-protection approvals. GitHub
   // enforces required reviews; the catalog owner authorized automated review.
@@ -517,20 +538,11 @@ async function trustedReview({github, owner, repo, pr, changedFiles, headSha}) {
   if (!evidence.closingVerified || evidence.threads.some(thread => thread.isResolved !== true)) return false;
   if (hasChangeRequest(reviews)) return false;
 
-  const finalReview = reviews.filter(review => BOT_REVIEWERS.has(review.user?.login) &&
-    review.commit_id === headSha)
-    .sort((a, b) => String(b.submitted_at || '').localeCompare(String(a.submitted_at || '')) || b.id-a.id)[0];
-  if (!finalReview || finalReview.state !== 'COMMENTED' || typeof finalReview.body !== 'string' ||
-    !/\bApproval recommended\b/i.test(finalReview.body) ||
-    !/\bNo open issues\b/i.test(finalReview.body) ||
-    /\b(?:changes recommended|needs a closer look|human review|request changes)\b/i.test(finalReview.body)) return false;
-  if (/could(?:n.t| not).*review|(?:wasn.t|was not) able to review|no files (?:were )?reviewed/i.test(finalReview.body)) return false;
-  const examined = reviewFiles(finalReview.body);
-  const hasTable = /^\|\s*File\s*\|/im.test(finalReview.body);
-  // A final, authenticated positive verdict is the provider's attestation.
-  // Its incremental clean-review format often omits tables and inline comments.
-  const attestedCleanFormat = /<!-- ccr-overview-v2 -->/.test(finalReview.body) && /^### .*Approval recommended/im.test(finalReview.body);
-  return changedFiles.length > 0 && (hasTable ? changedFiles.every(file => examined.has(file)) : attestedCleanFormat);
+  // Paid Copilot PR reviews are intentionally not required. A successful
+  // authenticated CI run and its free-review job are checked separately.
+  // Keep all closing-issue, unresolved-thread and CHANGES_REQUESTED gates.
+  return changedFiles.length > 0 && /^[0-9a-f]{40}$/i.test(headSha);
+
 }
 
 async function mergeEligiblePullRequest({
@@ -563,7 +575,8 @@ async function mergeEligiblePullRequest({
   const scopeFiles = [...new Set(files.flatMap(file =>
     [file.filename, file.previous_filename].filter(Boolean)))];
   if (!scopeFiles.length || scopeFiles.some(file => !pathAllowed(file, task.files))) return false;
-  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha, pr.number)) return false;
+  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha, pr.number) ||
+    !await trustedFreeReview(github, owner, repo, workflow, pr.head.sha, pr.number)) return false;
   if (!await trustedReview({github, owner, repo, pr, changedFiles: reviewedFiles, headSha: pr.head.sha})) return false;
 
   const [latest, main, latestIssue, currentPrs] = await Promise.all([
@@ -626,7 +639,8 @@ async function mergeEligiblePullRequest({
   }) || !await trustedReview({
     github, owner, repo, pr: finalPr.data, changedFiles: reviewedFiles, headSha: pr.head.sha
   })) return false;
-  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha, pr.number)) return false;
+  if (!await trustedCi(github, owner, repo, workflow, pr.head.sha, pr.number) ||
+    !await trustedFreeReview(github, owner, repo, workflow, pr.head.sha, pr.number)) return false;
   const result = await github.rest.pulls.merge({
     owner, repo, pull_number: pr.number, merge_method: 'merge', sha: pr.head.sha
   });
@@ -641,8 +655,102 @@ function taskMatchesAuthorizedIssue(task, issue) {
     issue.state === 'open' && taskMetadataMatches(task, issue);
 }
 
+
+async function completedCopilotSession({github, owner, repo, pr}) {
+  // Only a completed GitHub-hosted Copilot agent session may finish its draft.
+  // A successful PR CI alone does not prove the coding agent has stopped.
+  const result = await github.rest.actions.listWorkflowRunsForRepo({
+    owner, repo, branch: pr.head.ref, per_page: 100
+  });
+  const runs = result.data?.workflow_runs;
+  assert(Array.isArray(runs), 'Copilot agent session listing is incomplete');
+  const sessions = runs.filter(run =>
+    run.name === 'Running Copilot cloud agent' && run.event === 'dynamic' &&
+    run.head_branch === pr.head.ref && run.repository?.full_name === REPOSITORY &&
+    run.head_repository?.full_name === REPOSITORY &&
+    String(run.actor?.login || '').toLowerCase() === 'copilot');
+  sessions.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
+  const latest = sessions[0];
+  return Boolean(latest && latest.status === 'completed' && latest.conclusion === 'success' &&
+    Array.isArray(latest.pull_requests) && latest.pull_requests.length === 1 &&
+    latest.pull_requests[0]?.number === pr.number &&
+    latest.pull_requests[0]?.head?.sha === pr.head.sha);
+}
+
+async function prepareCompletedCopilotPullRequest({
+  github, owner, repo, pr, task, issue, workflow, mainSha
+}) {
+  // Preparation modifies only the PR branch or draft status, never protected main.
+  if (pr.state !== 'open' || pr.merged === true || pr.base?.ref !== 'main' ||
+    pr.base?.repo?.full_name !== REPOSITORY || pr.head?.repo?.full_name !== REPOSITORY ||
+    !/^copilot\/[A-Za-z0-9._/-]+$/.test(pr.head?.ref || '') ||
+    !['copilot', 'copilot-swe-agent[bot]'].includes(pr.user?.login?.toLowerCase()) ||
+    !/^[0-9a-f]{40}$/i.test(pr.head?.sha || '') ||
+    /^\s*(?:\[WIP\]|WIP\b)/i.test(pr.title || '') ||
+    !taskMatchesAuthorizedIssue(task, issue) ||
+    linkedIssueNumbers(pr.body || '').length !== 1 ||
+    linkedIssueNumbers(pr.body || '')[0] !== task.issue) return null;
+  if (!pr.draft && pr.base?.sha === mainSha) return null;
+  if (!await completedCopilotSession({github, owner, repo, pr})) return null;
+  const files = await github.paginate(github.rest.pulls.listFiles, {
+    owner, repo, pull_number: pr.number, per_page: 100
+  });
+  if (!Array.isArray(files) || !Number.isSafeInteger(pr.changed_files) ||
+    files.length !== pr.changed_files || files.length === 0 ||
+    files.some(file => typeof file.filename !== 'string' ||
+      (file.previous_filename != null && typeof file.previous_filename !== 'string')) ||
+    new Set(files.map(file => file.filename)).size !== files.length ||
+    files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean))
+      .some(filename => !pathAllowed(filename, task.files))) return null;
+  const [currentPr, currentIssue, currentMain] = await Promise.all([
+    github.rest.pulls.get({owner, repo, pull_number: pr.number}),
+    github.rest.issues.get({owner, repo, issue_number: task.issue}),
+    github.rest.repos.getBranch({owner, repo, branch: 'main'})
+  ]);
+  const latest = currentPr.data;
+  if (currentMain.data.commit?.sha !== mainSha || !taskMatchesAuthorizedIssue(task, currentIssue.data) ||
+    latest.state !== 'open' || latest.merged === true || latest.head?.sha !== pr.head.sha ||
+    latest.head?.ref !== pr.head.ref || latest.head?.repo?.full_name !== REPOSITORY ||
+    latest.base?.ref !== 'main' || latest.base?.repo?.full_name !== REPOSITORY ||
+    latest.changed_files !== pr.changed_files || latest.draft !== pr.draft ||
+    latest.user?.login?.toLowerCase() !== pr.user?.login?.toLowerCase() ||
+    linkedIssueNumbers(latest.body || '').length !== 1 ||
+    linkedIssueNumbers(latest.body || '')[0] !== task.issue ||
+    !await completedCopilotSession({github, owner, repo, pr: latest})) return null;
+  if (latest.base.sha !== mainSha) {
+    if (latest.mergeable_state === 'dirty') return null;
+    // GitHub verifies the expected PR head; no forced update, no main bypass.
+    const updated = await github.rest.pulls.updateBranch({
+      owner, repo, pull_number: latest.number, expected_head_sha: latest.head.sha
+    });
+    assert(updated.status === 202, 'Branch refresh was not accepted by GitHub');
+    return 'branch-updated';
+  }
+  if (!latest.draft) return null;
+  if (!await trustedCi(github, owner, repo, workflow, latest.head.sha, latest.number) ||
+    !await trustedFreeReview(github, owner, repo, workflow, latest.head.sha, latest.number) ||
+    !await trustedReview({
+      github, owner, repo, pr: latest,
+      changedFiles: files.map(file => file.filename), headSha: latest.head.sha
+    })) return null;
+  const result = await github.graphql(
+    'query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id isDraft headRefOid}}}',
+    {owner, repo, number: latest.number}
+  );
+  const node = result?.repository?.pullRequest;
+  if (!node?.id || node.isDraft !== true || node.headRefOid !== latest.head.sha) return null;
+  const mark = await github.graphql(
+    'mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id isDraft headRefOid}}}',
+    {id: node.id}
+  );
+  const ready = mark?.markPullRequestReadyForReview?.pullRequest;
+  assert(ready?.id === node.id && ready.isDraft === false &&
+    ready.headRefOid === latest.head.sha, 'Ready-for-review transition not confirmed');
+  return 'ready-for-review';
+}
+
 async function run({github, context, core, io = fs}) {
-  const report = {decision: 'none', promoted: [], merged: [], blockers: []};
+  const report = {decision: 'none', promoted: [], prepared: [], merged: [], blockers: []};
   const expectedRepo = process.env.EXPECTED_REPO;
   if (`${context.repo.owner}/${context.repo.repo}` !== REPOSITORY ||
     expectedRepo !== REPOSITORY || context.ref !== 'refs/heads/main' ||
@@ -715,6 +823,22 @@ async function run({github, context, core, io = fs}) {
           }
           continue;
         }
+        if (detailedPr.draft || detailedPr.base?.sha !== main.data.commit.sha) {
+          let preparation = null;
+          try {
+            preparation = await prepareCompletedCopilotPullRequest({
+              github, owner, repo, pr: detailedPr, task, issue: latestIssue.data,
+              workflow, mainSha: main.data.commit.sha
+            });
+          } catch (error) {
+            report.blockers.push('copilot-pr-preparation:#' + pr.number +
+              (Number.isSafeInteger(error?.status) ? ':HTTP-' + error.status : ':verification'));
+          }
+          if (preparation) {
+            report.prepared.push({pr: pr.number, action: preparation});
+            break; // New PR head/status must be revalidated in the next pass.
+          }
+        }
         if (await mergeEligiblePullRequest({
           github, owner, repo, pr: detailedPr, task, issue: latestIssue.data,
           workflow, mainSha: main.data.commit.sha, tasks, issuesByNumber, allPrs
@@ -725,7 +849,8 @@ async function run({github, context, core, io = fs}) {
       }
     }
     report.decision = report.merged.length ? 'merged' :
-      report.promoted.length ? 'promoted' : report.blockers.length ? 'blocked' : 'idle';
+      report.prepared.length ? 'prepared' : report.promoted.length ? 'promoted' :
+      report.blockers.length ? 'blocked' : 'idle';
     core?.notice?.(`Orchestration: ${report.decision}`);
     return report;
   } catch {
@@ -740,5 +865,6 @@ async function run({github, context, core, io = fs}) {
 module.exports = {
   run, validateCatalog, taskMatchesIssue, issueDependencies, pathAllowed,
   mergeEligiblePullRequest, dependenciesReady, revalidateDispatchCandidate,
-  retryAllowed, CONTRACT_VERSION: 1, REQUIRED_WORKFLOW, REPOSITORY
+  retryAllowed, completedCopilotSession, prepareCompletedCopilotPullRequest,
+  CONTRACT_VERSION: 1, REQUIRED_WORKFLOW, REPOSITORY
 };
