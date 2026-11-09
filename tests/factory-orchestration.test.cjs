@@ -162,6 +162,7 @@ function orchestrationGithub({
       if (method === github.rest.pulls.listReviews) return reviews;
       if (method === github.rest.pulls.listReviewComments) return reviewComments;
       if (method === github.rest.actions.listWorkflowRuns) return ciContext(workflowRuns);
+      if (method === github.rest.actions.listJobsForWorkflowRun) return [{name:'Free deterministic PR review',status:'completed',conclusion:'success',run_id:args.run_id,head_sha:headSha}];
       throw new Error('unexpected paginate');
     },
     rest: {
@@ -203,7 +204,7 @@ function orchestrationGithub({
         }
       },
       actions: {
-        listWorkflowRuns() {},
+        listWorkflowRuns() {}, listJobsForWorkflowRun() {},
         getWorkflow: async () => ({data: {
           id: 12, path: orchestration.REQUIRED_WORKFLOW.path,
           name: orchestration.REQUIRED_WORKFLOW.name, state: 'active'
@@ -709,6 +710,7 @@ ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}
   const github = {
     paginate: async (method) => {
       if (method === github.rest.pulls.listFiles) return fileEntries;
+      if (method === github.rest.actions.listJobsForWorkflowRun) return [{name:'Free deterministic PR review',status:'completed',conclusion:'success',run_id:args.run_id,head_sha:head}];
       if (method === github.rest.actions.listWorkflowRuns) {
         ciCalls++;
         if (ciCalls > 1 && lateWorkflowRuns) return ciContext(lateWorkflowRuns);
@@ -758,7 +760,7 @@ ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}
             finalIssue || linkedIssue};
         }
       },
-      actions: {listWorkflowRuns() {}},
+      actions: {listWorkflowRuns() {}, listJobsForWorkflowRun() {}},
       repos: {getBranch: async () => {
         mainReadCalls++;
         return {data: {commit: {sha: mainReadCalls > 1 ? finalMainAfterFirstRead || finalMain : mainSha}}};
