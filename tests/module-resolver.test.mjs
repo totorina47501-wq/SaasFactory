@@ -148,6 +148,24 @@ test('requires exact acceptance of limitations, including transitively selected 
   );
 });
 
+test('does not require or accept a redundant limitation acknowledgement for verified modules', () => {
+  const input = catalog();
+  const api = input.modules.find(item => item.descriptor.id === 'api');
+  api.descriptor.maturity = 'verified';
+  api.descriptor.verification = [{
+    kind: 'test',
+    reference: 'tests/module-resolver.test.mjs',
+    version: api.descriptor.version,
+    scope: 'implementation',
+  }];
+  api.limitations = [];
+  const registry = createModuleRegistry(input);
+  const redundant = selection(registry, ['api']);
+  expectCode(() => resolveModules(registry, redundant), 'INVALID_SELECTION');
+  redundant.acceptedLimitations = [];
+  assert.deepEqual(resolveModules(registry, redundant).modules.map(module => module.id), ['api']);
+});
+
 test('enforces offline constraints and reports network requirements when online mode is requested', () => {
   const input = catalog();
   const api = input.modules.find(item => item.descriptor.id === 'api').descriptor;

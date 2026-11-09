@@ -11,6 +11,7 @@ const limitationFields = ['id', 'version', 'limitations'];
 const idPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
 const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 const permissionPattern = /^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$/u;
+const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 
 function fail(code) {
   throw new ModuleRegistryError(code);
@@ -100,7 +101,7 @@ export function resolveModules(registry, selection) {
     if (visiting.has(key)) fail('DEPENDENCY_CYCLE');
     if (visited.has(key)) return;
     visiting.add(key);
-    for (const dependencyId of [...entry.descriptor.dependencies].sort()) {
+    for (const dependencyId of [...entry.descriptor.dependencies].sort(compareText)) {
       const dependency = entriesById.get(dependencyId);
       if (!dependency) fail('MISSING_DEPENDENCY');
       visit(dependency);
@@ -110,7 +111,7 @@ export function resolveModules(registry, selection) {
     chosen.push(entry);
   }
 
-  for (const requested of [...input.modules].sort((left, right) => left.id.localeCompare(right.id))) {
+  for (const requested of [...input.modules].sort((left, right) => compareText(left.id, right.id))) {
     visit(getModuleEntry(registry, requested.id, requested.version));
   }
 
@@ -142,6 +143,7 @@ export function resolveModules(registry, selection) {
     const key = `${entry.descriptor.id}@${entry.descriptor.version}`;
     const accepted = acceptedByModule.get(key) ?? new Set();
     const required = new Set(entry.limitations.map(limitation => limitation.id));
+    if (required.size === 0 && acceptedByModule.has(key)) fail('INVALID_SELECTION');
     if (required.size > 0 && !acceptedByModule.has(key)) fail('LIMITATION_NOT_ACCEPTED');
     if ([...accepted].some(item => !required.has(item)) ||
         [...required].some(item => !accepted.has(item))) {

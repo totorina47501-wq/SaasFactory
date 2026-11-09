@@ -36,6 +36,10 @@ test('validates closed catalogs and descriptor maturity without promoting module
   unknownCatalogField.unexpected = true;
   expectCode(() => createModuleRegistry(unknownCatalogField), 'INVALID_CATALOG');
 
+  const unknownCapabilityField = catalog();
+  unknownCapabilityField.capabilities[0].available = true;
+  expectCode(() => createModuleRegistry(unknownCapabilityField), 'INVALID_CATALOG');
+
   const unknownDescriptorField = catalog();
   unknownDescriptorField.modules[0].descriptor.install = 'not executable';
   expectCode(() => createModuleRegistry(unknownDescriptorField), 'INVALID_MODULE_DESCRIPTOR');

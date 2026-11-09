@@ -1,6 +1,6 @@
 # Registre et résolution des modules — contrat v1
 
-**Version :** `moduleRegistryVersion: 1` · **API :** `contractVersion: 1` des `ModuleDescriptor`.  
+**Version :** `moduleRegistryVersion: 1` · **API :** `contractVersion: 1` des `ModuleDescriptor`.
 Ce contrat choisit et ordonne des métadonnées locales. Il n'exécute pas de module, n'écrit aucun fichier et n'active aucun fournisseur.
 
 ## Catalogue et disponibilité
@@ -43,7 +43,7 @@ Les chemins `generatedFiles` et `tests` sont informatifs. Ils ne constituent pas
 ```
 
 - `modules` est une liste non vide d'IDs uniques avec version exacte. Tous les modules ajoutés transitivement doivent aussi avoir leurs limitations acceptées.
-- `acceptedLimitations` doit nommer chaque limitation déclarée de chaque module résolu, avec l'ID et la version exacts. Une acceptation partielle, inconnue ou superflue échoue. Une maturité non `verified` sans acceptation échoue ; aucune maturité n'est modifiée.
+- `acceptedLimitations` doit nommer chaque limitation déclarée de chaque module résolu, avec l'ID et la version exacts. Une entrée est requise uniquement si le module déclare des limitations. Une acceptation partielle, inconnue ou superflue échoue. Une maturité non `verified` sans limitation déclarée est refusée par le registre ; aucune maturité n'est modifiée.
 - `prerequisites` fournit les prérequis effectivement satisfaits par l'appelant. Tout prérequis de module absent bloque la résolution.
 - `permissions` représente les permissions explicitement accordées par l'appelant. Les permissions déclarées des modules ne confèrent aucun droit ; une permission requise manquante bloque la résolution.
 - `offline` est obligatoire. En mode `true`, un module qui ne supporte pas l'offline ou requiert le réseau bloque la résolution. Le résultat agrège les états hors-ligne ; en mode `false`, ces métadonnées restent visibles sans prétendre qu'un test réseau a eu lieu.

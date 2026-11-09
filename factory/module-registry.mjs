@@ -9,6 +9,7 @@ const registryFields = [
   'capabilities',
   'modules',
 ];
+const capabilityFields = ['id', 'title', 'category', 'status', 'scaffold', 'owner', 'reference'];
 const moduleFields = ['descriptor', 'limitations'];
 const limitationFields = ['id', 'description'];
 const idPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
@@ -23,6 +24,7 @@ const credentialMarkers = [
   /(?:password|api[_ -]?key|access[_ -]?token|secret[_ -]?key)\s*[:=]\s*['"]?[A-Za-z0-9_+/=-]{16,}/iu,
 ];
 const registryData = new WeakMap();
+const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 
 export class ModuleRegistryError extends Error {
   constructor(code) {
@@ -36,7 +38,7 @@ function fail(code) {
   throw new ModuleRegistryError(code);
 }
 
-export function snapshotJson(value, state = { seen: new WeakSet(), nodes: 0 }, depth = 0) {
+function copyJson(value, state, depth) {
   state.nodes += 1;
   if (state.nodes > 20_000 || depth > 64) fail('INVALID_INPUT');
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
@@ -61,7 +63,7 @@ export function snapshotJson(value, state = { seen: new WeakSet(), nodes: 0 }, d
       fail('INVALID_INPUT');
     }
     Object.defineProperty(result, key, {
-      value: snapshotJson(property.value, state, depth + 1),
+      value: copyJson(property.value, state, depth + 1),
       enumerable: true,
       writable: true,
       configurable: true,
@@ -72,6 +74,10 @@ export function snapshotJson(value, state = { seen: new WeakSet(), nodes: 0 }, d
   }
   state.seen.delete(value);
   return result;
+}
+
+export function snapshotJson(value) {
+  return copyJson(value, { seen: new WeakSet(), nodes: 0 }, 0);
 }
 
 function exactKeys(value, expected, code = 'INVALID_CATALOG') {
@@ -94,6 +100,22 @@ function validateCatalog(catalog) {
       catalog.capabilities.length > 256 || !Array.isArray(catalog.modules) ||
       catalog.modules.length > 128) {
     fail('INVALID_CATALOG');
+  }
+
+  const capabilityIds = new Set();
+  for (const capability of catalog.capabilities) {
+    exactKeys(capability, capabilityFields);
+    if (typeof capability.id !== 'string' || !idPattern.test(capability.id) ||
+        !safeText(capability.title, 160) ||
+        typeof capability.category !== 'string' || !idPattern.test(capability.category) ||
+        !['scaffold', 'missing', 'proposed'].includes(capability.status) ||
+        (capability.scaffold !== null && (typeof capability.scaffold !== 'string' || !idPattern.test(capability.scaffold))) ||
+        typeof capability.owner !== 'string' || !idPattern.test(capability.owner) ||
+        (capability.reference !== null && !safeText(capability.reference, 300)) ||
+        capabilityIds.has(capability.id)) {
+      fail('INVALID_CATALOG');
+    }
+    capabilityIds.add(capability.id);
   }
 
   const entries = [];
@@ -130,7 +152,7 @@ function validateCatalog(catalog) {
   if (new Set(entries.map(entry => entry.descriptor.id)).size !== entries.length) {
     fail('DUPLICATE_MODULE');
   }
-  entries.sort((left, right) => left.descriptor.id.localeCompare(right.descriptor.id));
+  entries.sort((left, right) => compareText(left.descriptor.id, right.descriptor.id));
   return entries;
 }
 
