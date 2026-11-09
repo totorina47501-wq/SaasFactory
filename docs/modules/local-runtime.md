@@ -26,9 +26,9 @@ Les services optionnels Redis et moteur de modèle exigent les profils Compose `
 
 ## Artefacts d'application
 
-Copier `compose.yaml`, `Dockerfile` et `.dockerignore` dans l'application indépendante. Fournir `APP_SLUG`, `DATABASE_URL` avec l'hôte `postgres`, et `POSTGRES_PASSWORD` local uniquement dans l'environnement Compose ou un fichier `.env` local ignoré par le contrôle de version. Encoder les caractères spéciaux du mot de passe dans l'URL de connexion. Les valeurs sont injectées au lancement et aucune valeur secrète n'est `ARG`, `ENV` ou copiée dans l'image. Le Dockerfile exige un `package-lock.json`, construit l'application et l'exécute comme utilisateur `node` non-root. Le service app doit exposer un endpoint local `/health` conforme au health check.
+Copier `compose.yaml`, `Dockerfile` et `.dockerignore` dans l'application indépendante. Fournir `APP_SLUG`, `DATABASE_URL` avec l'hôte `postgres`, et `POSTGRES_PASSWORD` local uniquement dans l'environnement Compose ou un fichier `.env` local ignoré par le contrôle de version. Encoder les caractères spéciaux du mot de passe dans l'URL de connexion. Les valeurs sont injectées au lancement et aucune valeur secrète n'est `ARG`, `ENV` ou copiée dans l'image. Le Dockerfile exige un `package-lock.json`, construit l'application et l'exécute comme utilisateur `node` non-root. Le health check vérifie que la route d'accueil répond en HTTP.
 
-Pour démarrer les services de base, exécuter manuellement `docker compose up --build`; les profils optionnels ne démarrent pas sans activation explicite. Pour inspecter les fichiers Compose sans démarrage, `docker compose config --quiet` ne requiert pas de connexion réseau mais attend la configuration locale requise. Aucun test de ce module ne lance Compose ou n'accède au réseau.
+Pour démarrer les services de base, exécuter manuellement `docker compose up --build`. Pour activer un service optionnel, choisir son profil (`--profile cache` ou `--profile local-model`) et définir son indicateur d'application correspondant. Pour inspecter les fichiers Compose sans démarrage, `docker compose config --quiet` ne requiert pas de connexion réseau mais attend la configuration locale requise. Aucun test de ce module ne lance Compose ou n'accède au réseau.
 
 ## Effets, erreurs et rollback
 

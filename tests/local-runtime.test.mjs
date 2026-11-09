@@ -126,6 +126,9 @@ test('Compose and container artifacts pin images, isolate local ports, bound ser
   assert.match(compose, /healthcheck:/u);
   assert.match(compose, /postgres_data:/u);
   assert.match(compose, /DATABASE_URL: \$\{DATABASE_URL:\?/u);
+  assert.match(compose, /CACHE_ENABLED: \$\{CACHE_ENABLED:-false\}/u);
+  assert.match(compose, /LOCAL_MODEL_ENABLED: \$\{LOCAL_MODEL_ENABLED:-false\}/u);
+  assert.match(compose, /fetch\('http:\/\/127\.0\.0\.1:3000\/'\)/u);
   assert.match(dockerfile, /^FROM node:22\.12\.0-bookworm-slim AS build$/mu);
   assert.match(dockerfile, /^USER node$/mu);
   assert.doesNotMatch(dockerfile, /\b(?:ARG|ENV)\s+\w*(?:SECRET|TOKEN|PASSWORD|KEY)\w*/iu);
