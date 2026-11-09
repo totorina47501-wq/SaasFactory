@@ -8,7 +8,7 @@ import { launchSeasonal } from '../seasonal/launch.mjs';
 import { themes, stylesheet } from '../seasonal/templates.mjs';
 
 test('seasonal presets are isolated, FR-only and dependency-free', () => {
-  assert.deepEqual(Object.keys(themes), ['promo-flash', 'cadeaux-zen']);
+  assert.deepEqual(Object.keys(themes), ['promo-flash', 'cadeaux-zen', 'noel-memory']);
   for (const [name, item] of Object.entries(themes)) {
     assert.match(name, /^[a-z0-9-]+$/);
     assert.match(item.domain, /\.example$/);
