@@ -62,7 +62,9 @@ export function launchSeasonal({ preset, outputRoot, write = false, target = 'no
     throw new Error('Generator baseline changed; seasonal overlays require review.');
   }
   if (!item.page.includes('export default function Home()')) throw new Error('Unknown seasonal page template.');
-  const newSmoke = smoke.replace(smokeNeedle, 'assert.match(page, /' + item.name + '/);');
+  const newSmoke = typeof item.smokeTest === 'string'
+    ? item.smokeTest.endsWith('\n') ? item.smokeTest : item.smokeTest + '\n'
+    : smoke.replace(smokeNeedle, 'assert.match(page, /' + item.name + '/);');
   const notes = `
 ## Seasonal Fast-Track — ${item.name}
 
