@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import capabilityCatalog from '../docs/catalog/saas-capabilities-v1.json' with { type: 'json' };
@@ -319,7 +320,7 @@ function compileIntakeV2(raw) {
   });
   const dryRunReport = generateProjectV2({
     config: verified.generatorConfig,
-    outputRoot: path.join(os.tmpdir(), 'saas-factory-intake-v2'),
+    outputRoot: path.join(os.tmpdir(), `saas-factory-intake-${randomUUID()}`),
     write: false,
   });
   return {
