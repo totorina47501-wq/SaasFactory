@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
@@ -56,6 +56,13 @@ function exactObject(value, allowed, required = allowed) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) fail('INVALID_INPUT');
   }
+}
+
+function storedObject(value, fields) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).some(key => !fields.includes(key)) ||
+      fields.some(key => !Object.hasOwn(value, key))) fail('CORRUPT_STORAGE');
+  return value;
 }
 
 function validateLimits(value = {}) {
@@ -279,8 +286,10 @@ function validateSegments(value, durationSeconds, { allowEmpty = false } = {}) {
     if (typeof startSeconds !== 'number' || !Number.isFinite(startSeconds) ||
         typeof endSeconds !== 'number' || !Number.isFinite(endSeconds) ||
         startSeconds < 0 || endSeconds <= startSeconds || endSeconds > durationSeconds ||
-        (index > 0 && startSeconds < previousEnd) || typeof text !== 'string' ||
-        text.trim().length < 1 || text.length > 2000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text)) {
+          Math.round(startSeconds * 1000) >= Math.round(endSeconds * 1000) ||
+          (index > 0 && startSeconds < previousEnd) || typeof text !== 'string' ||
+          text.trim().length < 1 || text.length > 2000 ||
+          /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\r\n]/u.test(text)) {
       fail('INVALID_TRANSCRIPT');
     }
     totalChars += text.length;
@@ -336,6 +345,7 @@ export async function createAudioService({
   let activeJobs = 0;
   const activeByTenant = new Map();
   const locks = new Map();
+  let quotaQueue = Promise.resolve();
 
   function now() {
     const value = clock();
@@ -390,6 +400,18 @@ export async function createAudioService({
       const remaining = (activeByTenant.get(tenantId) ?? 1) - 1;
       if (remaining === 0) activeByTenant.delete(tenantId);
       else activeByTenant.set(tenantId, remaining);
+    }
+  }
+
+  async function withQuotaLock(operation) {
+    const previous = quotaQueue;
+    let release;
+    quotaQueue = new Promise(resolve => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
     }
   }
 
@@ -478,7 +500,11 @@ export async function createAudioService({
 
   async function getAudio(tenantId, audioId) {
     const dirs = await tenantDirectories(tenantId);
-    const metadata = await readJson(path.join(dirs.sources, `${audioId}.json`));
+    const metadata = storedObject(await readJson(path.join(dirs.sources, `${audioId}.json`)), [
+      'contractVersion', 'id', 'tenantId', 'mimeType', 'container', 'durationSeconds',
+      'codec', 'sampleRate', 'channels', 'bitRate', 'sourceHash', 'sourceBytes', 'createdAt',
+      'expiresAt',
+    ]);
     if (!metadata || metadata.contractVersion !== CONTRACT_VERSION || metadata.id !== audioId ||
         metadata.tenantId !== tenantId || !Object.hasOwn(CONTAINERS, metadata.container) ||
         metadata.mimeType !== CONTAINERS[metadata.container].mimeType ||
@@ -487,9 +513,11 @@ export async function createAudioService({
         !Number.isSafeInteger(metadata.sourceBytes) || metadata.sourceBytes < 1 ||
         metadata.sourceBytes > limits.maxInputBytes || !Number.isSafeInteger(metadata.createdAt) ||
         !Number.isSafeInteger(metadata.expiresAt) || metadata.expiresAt <= metadata.createdAt ||
+        (metadata.bitRate !== null && (!Number.isSafeInteger(metadata.bitRate) || metadata.bitRate < 1)) ||
         !Number.isSafeInteger(metadata.sampleRate) || metadata.sampleRate < 8000 ||
         metadata.sampleRate > 192000 || !Number.isSafeInteger(metadata.channels) ||
         metadata.channels < 1 || metadata.channels > 8 ||
+        !CONTAINERS[metadata.container].codecs.includes(metadata.codec) ||
         typeof metadata.sourceHash !== 'string' || !/^[a-f0-9]{64}$/u.test(metadata.sourceHash)) {
       fail('CORRUPT_STORAGE');
     }
@@ -506,14 +534,17 @@ export async function createAudioService({
   async function getTranscript(tenantId, transcriptId) {
     const dirs = await tenantDirectories(tenantId);
     const filePath = path.join(dirs.transcripts, `${transcriptId}.json`);
-    const metadata = await readJson(filePath, 2 * 1024 * 1024);
+    const metadata = storedObject(await readJson(filePath, 2 * 1024 * 1024), [
+      'contractVersion', 'id', 'tenantId', 'audioId', 'version', 'status', 'segments',
+      'validatedAt', 'createdAt', 'updatedAt', 'expiresAt',
+    ]);
     if (!metadata || metadata.contractVersion !== CONTRACT_VERSION || metadata.id !== transcriptId ||
         metadata.tenantId !== tenantId || !UUID.test(metadata.audioId) ||
         !Number.isSafeInteger(metadata.version) || metadata.version < 1 ||
         !TRANSCRIPT_STATUSES.includes(metadata.status) || !Number.isSafeInteger(metadata.createdAt) ||
         !Number.isSafeInteger(metadata.updatedAt) || !Number.isSafeInteger(metadata.expiresAt) ||
-        !Array.isArray(metadata.segments) || typeof metadata.validatedAt !== 'number' &&
-        metadata.validatedAt !== null) fail('CORRUPT_STORAGE');
+        !Array.isArray(metadata.segments) ||
+        (metadata.validatedAt !== null && !Number.isSafeInteger(metadata.validatedAt))) fail('CORRUPT_STORAGE');
     const audio = await getAudio(tenantId, metadata.audioId);
     const segments = validateSegments(metadata.segments, audio.metadata.durationSeconds, {
       allowEmpty: metadata.status === 'draft',
@@ -526,22 +557,33 @@ export async function createAudioService({
   async function removeAudioFiles(tenantId, audioId) {
     const dirs = await tenantDirectories(tenantId);
     const transcriptDir = dirs.transcripts;
+    let deletedTranscripts = 0;
     for (const name of await readdir(transcriptDir)) {
       if (!name.endsWith('.json')) continue;
       const filePath = path.join(transcriptDir, name);
-      const item = await readJson(filePath, 2 * 1024 * 1024);
-      if (item.audioId === audioId) await unlink(filePath);
+      const item = storedObject(await readJson(filePath, 2 * 1024 * 1024), [
+        'contractVersion', 'id', 'tenantId', 'audioId', 'version', 'status', 'segments',
+        'validatedAt', 'createdAt', 'updatedAt', 'expiresAt',
+      ]);
+      if (item.tenantId !== tenantId || !UUID.test(item.id) ||
+          name !== `${item.id}.json` || !UUID.test(item.audioId)) fail('CORRUPT_STORAGE');
+      if (item.audioId === audioId) {
+        await unlink(filePath);
+        deletedTranscripts += 1;
+      }
     }
-    for (const suffix of ['.source', '.normalized.wav', '.json']) {
+    for (const suffix of ['.source', '.normalized.wav', '.normalized.json', '.json']) {
       await unlink(path.join(dirs.sources, `${audioId}${suffix}`)).catch(error => {
         if (error.code !== 'ENOENT') throw error;
       });
     }
+    return deletedTranscripts;
   }
 
   const service = Object.freeze({
     async ingest(input) {
-      exactObject(input, ['cookieHeader', 'tenantId', 'requestId', 'consent', 'audio', 'signal']);
+      exactObject(input, ['cookieHeader', 'tenantId', 'requestId', 'consent', 'audio', 'signal'],
+        ['cookieHeader', 'tenantId', 'requestId', 'consent', 'audio']);
       validSignal(input.signal);
       if (input.consent !== true) fail('CONSENT_REQUIRED');
       if (!validAudioBuffer(input.audio)) fail('INVALID_INPUT');
@@ -559,7 +601,6 @@ export async function createAudioService({
         const createdAt = now();
         const expiresAt = createdAt + limits.retentionMs;
         if (!Number.isSafeInteger(expiresAt)) fail('TIME_RANGE');
-        await reserve(context.tenantId, 2, audio.length + 4096);
         try {
           await writeFile(temporaryPath, audio, { flag: 'wx', mode: 0o600 });
           const raw = await runEngine(ffprobePath, [
@@ -576,8 +617,14 @@ export async function createAudioService({
             contractVersion: CONTRACT_VERSION, id, tenantId: context.tenantId, ...probe,
             sourceHash: sha256(audio), sourceBytes: audio.length, createdAt, expiresAt,
           };
-          await rename(temporaryPath, sourcePath);
-          await writeFile(metadataPath, JSON.stringify(metadata), { flag: 'wx', mode: 0o600 });
+          await withQuotaLock(async () => {
+            await reserve(context.tenantId, 2,
+              audio.length + Buffer.byteLength(JSON.stringify(metadata)));
+            if (input.signal?.aborted) fail('INTERRUPTED');
+            await rename(temporaryPath, sourcePath);
+            await writeFile(metadataPath, JSON.stringify(metadata), { flag: 'wx', mode: 0o600 });
+            if (input.signal?.aborted) fail('INTERRUPTED');
+          });
           return Object.freeze({
             id, contractVersion: CONTRACT_VERSION, ...probe, sourceBytes: audio.length, expiresAt,
           });
@@ -610,13 +657,15 @@ export async function createAudioService({
       return service.ingest({ ...auth, consent: true, audio: result.data });
     },
     async normalize(input) {
-      exactObject(input, ['cookieHeader', 'tenantId', 'requestId', 'audioId', 'signal']);
+      exactObject(input, ['cookieHeader', 'tenantId', 'requestId', 'audioId', 'signal'],
+        ['cookieHeader', 'tenantId', 'requestId', 'audioId']);
       validSignal(input.signal);
       const context = await authorize(input, 'audio.normalize');
       return withJob(context.tenantId, input.signal, async () => {
         const audioId = uuid(input.audioId);
         const { dirs, metadata, sourcePath } = await getAudio(context.tenantId, audioId);
         const normalizedPath = path.join(dirs.sources, `${audioId}.normalized.wav`);
+        const normalizedMetadataPath = path.join(dirs.sources, `${audioId}.normalized.json`);
         if (await lstat(normalizedPath).catch(() => null)) fail('ALREADY_NORMALIZED');
         const temp = path.join(temporaryRoot, `${randomUUID()}.normalized`);
         try {
@@ -629,37 +678,64 @@ export async function createAudioService({
             signal: input.signal, outputTooLargeCode: 'OUTPUT_TOO_LARGE',
           });
           if (normalized.length < 44 || normalized.toString('ascii', 0, 4) !== 'RIFF' ||
-              normalized.toString('ascii', 8, 12) !== 'WAVE') fail('INVALID_ENGINE_OUTPUT');
-          await reserve(context.tenantId, 1, normalized.length);
+              normalized.toString('ascii', 8, 12) !== 'WAVE' ||
+              normalized.readUInt32LE(4) + 8 > normalized.length) fail('INVALID_ENGINE_OUTPUT');
+          const normalizedMetadata = {
+            contractVersion: CONTRACT_VERSION, audioId, tenantId: context.tenantId,
+            size: normalized.length, sha256: sha256(normalized), createdAt: now(),
+          };
           await writeFile(temp, normalized, { flag: 'wx', mode: 0o600 });
           if (input.signal?.aborted) fail('INTERRUPTED');
-          await rename(temp, normalizedPath);
+          await withQuotaLock(async () => {
+            await reserve(context.tenantId, 2,
+              normalized.length + Buffer.byteLength(JSON.stringify(normalizedMetadata)));
+            if (input.signal?.aborted) fail('INTERRUPTED');
+            await rename(temp, normalizedPath);
+            await writeJson(normalizedMetadataPath, normalizedMetadata);
+            if (input.signal?.aborted) fail('INTERRUPTED');
+          });
           return Object.freeze({
             audioId, contentType: 'audio/wav', sampleRate: 16000, channels: 1,
-            size: normalized.length, sha256: sha256(normalized), expiresAt: metadata.expiresAt,
+            size: normalized.length, sha256: normalizedMetadata.sha256, expiresAt: metadata.expiresAt,
           });
         } catch (error) {
           await unlink(temp).catch(() => {});
           await unlink(normalizedPath).catch(() => {});
+          await unlink(normalizedMetadataPath).catch(() => {});
           if (error instanceof AudioModuleError) throw error;
           fail('STORAGE_UNAVAILABLE');
         }
       });
     },
     async readAudio(input) {
-      exactObject(input, ['cookieHeader', 'tenantId', 'requestId', 'audioId', 'normalized']);
+      exactObject(input, ['cookieHeader', 'tenantId', 'requestId', 'audioId', 'normalized'],
+        ['cookieHeader', 'tenantId', 'requestId', 'audioId']);
       if (input.normalized !== undefined && typeof input.normalized !== 'boolean') fail('INVALID_INPUT');
       const context = await authorize(input, 'audio.read');
       const audioId = uuid(input.audioId);
       const { dirs, metadata, sourcePath } = await getAudio(context.tenantId, audioId);
       const normalizedPath = path.join(dirs.sources, `${audioId}.normalized.wav`);
-      const useNormalized = input.normalized === true && Boolean(await lstat(normalizedPath).catch(() => null));
+      const normalizedInfo = await lstat(normalizedPath).catch(() => null);
+      if (input.normalized === true && !normalizedInfo) fail('NOT_FOUND');
+      const useNormalized = input.normalized === true;
       const target = useNormalized ? normalizedPath : sourcePath;
       const info = await lstat(target).catch(() => null);
       if (!info?.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0 ||
           info.size > (useNormalized ? limits.maxOutputBytes : limits.maxInputBytes)) fail('CORRUPT_STORAGE');
       const data = await readFile(target);
-      if (!useNormalized && sha256(data) !== metadata.sourceHash) fail('CORRUPT_STORAGE');
+      if (useNormalized) {
+        const normalizedMetadata = storedObject(await readJson(
+          path.join(dirs.sources, `${audioId}.normalized.json`), 4096), [
+          'contractVersion', 'audioId', 'tenantId', 'size', 'sha256', 'createdAt',
+        ]);
+        if (normalizedMetadata.contractVersion !== CONTRACT_VERSION ||
+            normalizedMetadata.audioId !== audioId || normalizedMetadata.tenantId !== context.tenantId ||
+            normalizedMetadata.size !== data.length || !/^[a-f0-9]{64}$/u.test(normalizedMetadata.sha256) ||
+            !Number.isSafeInteger(normalizedMetadata.createdAt) ||
+            sha256(data) !== normalizedMetadata.sha256) fail('CORRUPT_STORAGE');
+      } else if (sha256(data) !== metadata.sourceHash) {
+        fail('CORRUPT_STORAGE');
+      }
       return Object.freeze({
         contentType: useNormalized ? 'audio/wav' : metadata.mimeType,
         data,
@@ -669,18 +745,22 @@ export async function createAudioService({
       exactObject(input, ['cookieHeader', 'tenantId', 'requestId', 'audioId']);
       const context = await authorize(input, 'audio.transcript.create');
       const audioId = uuid(input.audioId);
-      const { metadata: audio } = await getAudio(context.tenantId, audioId);
-      const dirs = await tenantDirectories(context.tenantId);
       const id = randomUUID();
       const createdAt = now();
-      const transcript = {
-        contractVersion: CONTRACT_VERSION, id, tenantId: context.tenantId, audioId,
-        version: 1, status: 'draft', segments: [], validatedAt: null, createdAt,
-        updatedAt: createdAt, expiresAt: audio.expiresAt,
-      };
-      await reserve(context.tenantId, 1, Buffer.byteLength(JSON.stringify(transcript)));
-      await writeJson(path.join(dirs.transcripts, `${id}.json`), transcript);
-      return Object.freeze({ ...transcript });
+      return withJob(context.tenantId, undefined, async () => {
+        const { metadata: audio } = await getAudio(context.tenantId, audioId);
+        const dirs = await tenantDirectories(context.tenantId);
+        const transcript = {
+          contractVersion: CONTRACT_VERSION, id, tenantId: context.tenantId, audioId,
+          version: 1, status: 'draft', segments: Object.freeze([]), validatedAt: null, createdAt,
+          updatedAt: createdAt, expiresAt: audio.expiresAt,
+        };
+        await withQuotaLock(async () => {
+          await reserve(context.tenantId, 1, Buffer.byteLength(JSON.stringify(transcript)));
+          await writeJson(path.join(dirs.transcripts, `${id}.json`), transcript);
+        });
+        return Object.freeze({ ...transcript });
+      });
     },
     async editTranscript(input) {
       exactObject(input, ['cookieHeader', 'tenantId', 'requestId', 'transcriptId', 'expectedVersion', 'segments']);
@@ -695,9 +775,11 @@ export async function createAudioService({
           ...transcript.metadata, version: transcript.metadata.version + 1,
           status: 'draft', segments, validatedAt: null, updatedAt: now(),
         };
-        await reserve(context.tenantId, 0, Buffer.byteLength(JSON.stringify(updated)) -
-          Buffer.byteLength(JSON.stringify(transcript.metadata)));
-        await writeJson(transcript.filePath, updated, true);
+        await withQuotaLock(async () => {
+          await reserve(context.tenantId, 0, Buffer.byteLength(JSON.stringify(updated)) -
+            Buffer.byteLength(JSON.stringify(transcript.metadata)));
+          await writeJson(transcript.filePath, updated, true);
+        });
         return Object.freeze({ ...updated });
       });
     },
@@ -710,9 +792,10 @@ export async function createAudioService({
         const transcript = await getTranscript(context.tenantId, transcriptId);
         if (transcript.metadata.version !== input.expectedVersion) fail('VERSION_CONFLICT');
         if (transcript.metadata.segments.length === 0) fail('INVALID_TRANSCRIPT');
+        const validatedAt = now();
         const updated = {
           ...transcript.metadata, version: transcript.metadata.version + 1,
-          status: 'validated', validatedAt: now(), updatedAt: now(),
+          status: 'validated', validatedAt, updatedAt: validatedAt,
         };
         await writeJson(transcript.filePath, updated, true);
         return Object.freeze({ ...updated });
@@ -758,15 +841,17 @@ export async function createAudioService({
       exactObject(input, ['cookieHeader', 'tenantId', 'requestId', 'transcriptId']);
       const context = await authorize(input, 'audio.transcript.delete');
       const transcript = await getTranscript(context.tenantId, uuid(input.transcriptId));
-      await unlink(transcript.filePath);
+      await withJob(context.tenantId, undefined, () => unlink(transcript.filePath));
       return Object.freeze({ deleted: true });
     },
     async deleteAudio(input) {
       exactObject(input, ['cookieHeader', 'tenantId', 'requestId', 'audioId']);
       const context = await authorize(input, 'audio.delete');
       const audioId = uuid(input.audioId);
-      await getAudio(context.tenantId, audioId);
-      await removeAudioFiles(context.tenantId, audioId);
+      await withJob(context.tenantId, undefined, async () => {
+        await getAudio(context.tenantId, audioId);
+        await removeAudioFiles(context.tenantId, audioId);
+      });
       return Object.freeze({ deleted: true });
     },
     async purgeExpired(input) {
@@ -779,20 +864,32 @@ export async function createAudioService({
         let cleanedTemporaryFiles = 0;
         const audioNames = await readdir(dirs.sources);
         for (const name of audioNames.filter(item => item.endsWith('.json'))) {
-          const metadata = await readJson(path.join(dirs.sources, name));
+          const metadata = storedObject(await readJson(path.join(dirs.sources, name)), [
+            'contractVersion', 'id', 'tenantId', 'mimeType', 'container', 'durationSeconds',
+            'codec', 'sampleRate', 'channels', 'bitRate', 'sourceHash', 'sourceBytes',
+            'createdAt', 'expiresAt',
+          ]);
           if (!Number.isSafeInteger(metadata.expiresAt) || !UUID.test(metadata.id) ||
-              metadata.tenantId !== context.tenantId || metadata.contractVersion !== CONTRACT_VERSION) {
+              name !== `${metadata.id}.json` || metadata.tenantId !== context.tenantId ||
+              metadata.contractVersion !== CONTRACT_VERSION) {
             fail('CORRUPT_STORAGE');
           }
           if (metadata.expiresAt <= now()) {
-            await removeAudioFiles(context.tenantId, metadata.id);
+            deletedTranscripts += await removeAudioFiles(context.tenantId, metadata.id);
             deletedAudio += 1;
           }
         }
         for (const name of await readdir(dirs.transcripts)) {
+          if (!name.endsWith('.json')) fail('CORRUPT_STORAGE');
           const filePath = path.join(dirs.transcripts, name);
-          const metadata = await readJson(filePath, 2 * 1024 * 1024);
-          if (!Number.isSafeInteger(metadata.expiresAt)) fail('CORRUPT_STORAGE');
+          const metadata = storedObject(await readJson(filePath, 2 * 1024 * 1024), [
+            'contractVersion', 'id', 'tenantId', 'audioId', 'version', 'status', 'segments',
+            'validatedAt', 'createdAt', 'updatedAt', 'expiresAt',
+          ]);
+          if (!Number.isSafeInteger(metadata.expiresAt) || !UUID.test(metadata.id) ||
+              name !== `${metadata.id}.json` || metadata.tenantId !== context.tenantId) {
+            fail('CORRUPT_STORAGE');
+          }
           if (metadata.expiresAt <= now()) {
             await unlink(filePath);
             deletedTranscripts += 1;
