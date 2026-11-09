@@ -10,7 +10,7 @@
 | `cadeaux-zen` | **CadeauxZen** | Budget cadeaux Noël modifiable dans le navigateur | Les données ne persistent pas après rechargement ; pas de compte |
 | `noel-memory` | **Noël Memory** | Jeu Memory de Noël mobile-first (clavier/tactile), mélange déterministe et métriques de victoire | Données en mémoire locale de session, pas de compte ni stockage distant |
 
-Les deux sorties sont des **applications Next.js indépendantes** construites par le générateur SaaSFactory existant, avec une page interactive et un style mobile-first. La bibliothèque `ai-disabled` reste active et il n'y a ni IA, ni paiement, ni scraping, ni transmission d'informations personnelles.
+Les sorties sont des **applications Next.js indépendantes** construites par le générateur SaaSFactory existant, avec une page interactive et un style mobile-first. La bibliothèque `ai-disabled` reste active et il n'y a ni IA, ni paiement, ni scraping, ni transmission d'informations personnelles.
 
 ## Commandes à exécuter (Node 22.12+)
 
