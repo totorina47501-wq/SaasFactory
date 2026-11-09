@@ -8,6 +8,37 @@ const migration = Object.freeze({
   id: '0001_tenant_entitlements',
   sql: readFileSync(new URL('./migrations/0001_tenant_entitlements.sql', import.meta.url), 'utf8'),
 });
+const registeredMigrations = Object.freeze([
+  {
+    moduleId: 'auth',
+    version: 1,
+    id: '0001_local_authentication',
+    url: new URL('../auth/migrations/0001_local_authentication.sql', import.meta.url),
+  },
+  {
+    moduleId: 'billing-simulated',
+    version: 1,
+    id: '0001_local_billing',
+    url: new URL('../billing-simulated/migrations/0001_local_billing.sql', import.meta.url),
+  },
+  {
+    moduleId: 'mfa',
+    version: 1,
+    id: '0001_local_mfa',
+    url: new URL('../mfa/migrations/0001_local_mfa.sql', import.meta.url),
+  },
+  {
+    moduleId: 'tenancy',
+    version: 1,
+    id: '0001_local_tenancy',
+    url: new URL('../tenancy/migrations/0001_local_tenancy.sql', import.meta.url),
+  },
+].map(({ moduleId, version, id, url }) => Object.freeze({
+  moduleId,
+  version,
+  id,
+  sql: readFileSync(url, 'utf8'),
+})));
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const SCHEMA_PATTERN = /^[a-z][a-z0-9_]{0,62}$/u;
 const QUOTA_PATTERN = /^[a-z][a-z0-9._-]{0,127}$/u;
@@ -119,7 +150,16 @@ async function reservationResult(client, tenantId, quotaId, periodStartAt, idemp
 
 export async function runEntitlementsMigrations(pool, schemaName) {
   try {
-    return await runMigrations(pool, schemaName, { extensionMigrations: [migration] });
+    return await runMigrations(pool, schemaName, {
+      extensionMigrations: [...registeredMigrations, migration],
+      extensionTargets: {
+        auth: 0,
+        'billing-simulated': 0,
+        entitlements: 1,
+        mfa: 0,
+        tenancy: 0,
+      },
+    });
   } catch {
     fail('UNAVAILABLE');
   }

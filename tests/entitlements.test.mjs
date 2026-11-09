@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
@@ -7,6 +8,7 @@ import {
   createPostgresEntitlementsStore,
   EntitlementsModuleError,
   entitlementsContract,
+  runEntitlementsMigrations,
 } from '../modules/entitlements/index.mjs';
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
@@ -104,6 +106,18 @@ test('replays reservations, rejects changed idempotency requests, and refunds fa
   assert.equal((await service.refund(context(), reservation.id)).status, 'refunded');
   assert.equal((await service.reserve(context(), 'api.requests', 3, 'retry-after-failure')).amount, 3);
   await expectCode(service.consume(context(), reservation.id), 'RESERVATION_FINALIZED');
+});
+
+test('preserves idempotent reservation retries when an override changes', async () => {
+  const { service } = fixture({ planId: 'free' });
+  await service.setQuotaOverride(context(), 'api.requests', 5);
+  const original = await service.reserve(context(), 'api.requests', 1, 'mutable-limit-retry');
+
+  await service.setQuotaOverride(context(), 'api.requests', 10);
+  const retry = await service.reserve(context(), 'api.requests', 1, 'mutable-limit-retry');
+
+  assert.equal(retry.id, original.id);
+  assert.equal(retry.status, 'reserved');
 });
 
 test('starts a new quota window when billing renews and lowers caps on downgrade', async () => {
@@ -266,4 +280,45 @@ test('rejects unsafe PostgreSQL configuration and declares forced tenant RLS', (
   assert.equal((migration.match(/ENABLE ROW LEVEL SECURITY/gu) ?? []).length, 3);
   assert.equal((migration.match(/FORCE ROW LEVEL SECURITY/gu) ?? []).length, 3);
   assert.doesNotMatch(migration, /\bDROP\b/iu);
+});
+
+test('includes existing module migration history without rerunning dependency migrations', async () => {
+  const moduleMigrations = [
+    ['auth', '0001_local_authentication', '../modules/auth/migrations/0001_local_authentication.sql'],
+    ['billing-simulated', '0001_local_billing', '../modules/billing-simulated/migrations/0001_local_billing.sql'],
+    ['mfa', '0001_local_mfa', '../modules/mfa/migrations/0001_local_mfa.sql'],
+    ['tenancy', '0001_local_tenancy', '../modules/tenancy/migrations/0001_local_tenancy.sql'],
+  ].map(([moduleId, id, file]) => ({
+    module_id: moduleId,
+    version: 1,
+    id,
+    checksum: createHash('sha256')
+      .update(readFileSync(new URL(file, import.meta.url)))
+      .digest('hex'),
+  }));
+  const calls = [];
+  const pool = {
+    async connect() {
+      return {
+        async query(sql) {
+          calls.push(sql);
+          if (sql.includes('SELECT module_id, version, id, checksum')) {
+            return { rows: moduleMigrations };
+          }
+          return { rows: [] };
+        },
+        release() {},
+      };
+    },
+  };
+
+  const migrations = await runEntitlementsMigrations(pool, 'app_test');
+
+  assert.ok(migrations.some(entry =>
+    entry.moduleId === 'entitlements' && entry.id === '0001_tenant_entitlements'));
+  assert.equal(calls.includes(readFileSync(
+    new URL('../modules/auth/migrations/0001_local_authentication.sql', import.meta.url),
+    'utf8',
+  )), false);
+  assert.equal(calls.at(-1), 'COMMIT');
 });

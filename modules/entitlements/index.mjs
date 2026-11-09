@@ -301,7 +301,7 @@ export function createEntitlementsService(configuration) {
       const featureId = QUOTAS[quotaId].featureId;
       if (!await featureEnabled(context, planId, featureId)) fail('FEATURE_DISABLED');
       const limit = await quotaLimit(context, planId, quotaId);
-      const fingerprint = `${quotaId}:${periodStartAt}:${periodEndAt}:${amount}:${limit}`;
+      const fingerprint = `${quotaId}:${amount}`;
       return runStore(() => store.reserve({
         tenantId: context.tenantId,
         quotaId,
