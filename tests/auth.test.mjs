@@ -409,6 +409,9 @@ test('PostgreSQL store uses fixed schema identifiers, bound values, and atomic r
           if (sql.includes('DELETE FROM "app_auth".auth_sessions') && sql.includes('RETURNING user_id')) {
             return { rows: [{ user_id: 'user-id' }] };
           }
+          if (sql.includes('SELECT user_id FROM "app_auth".auth_password_resets')) {
+            return { rows: [{ user_id: 'user-id' }] };
+          }
           if (sql.includes('DELETE FROM "app_auth".auth_password_resets') && sql.includes('RETURNING user_id')) {
             return { rows: [{ user_id: 'user-id' }] };
           }
@@ -449,7 +452,18 @@ test('PostgreSQL store uses fixed schema identifiers, bound values, and atomic r
   assert.ok(calls.some(call => call.sql.includes('FOR UPDATE')));
   assert.ok(calls.some(call => call.sql === 'COMMIT'));
   assert.ok(calls.some(call => call.sql === 'ROLLBACK'));
-  assert.ok(calls.some(call => call.sql.includes('auth_sessions WHERE expires_at <=')));
+  const resetCandidate = calls.findIndex(call =>
+    call.sql.includes('SELECT user_id FROM "app_auth".auth_password_resets'));
+  const resetUserLock = calls.findIndex((call, index) => index > resetCandidate &&
+    call.sql.includes('SELECT id FROM "app_auth".auth_users') && call.sql.includes('FOR UPDATE'));
+  const resetConsumption = calls.findIndex(call =>
+    call.sql.includes('DELETE FROM "app_auth".auth_password_resets') && call.sql.includes('RETURNING user_id'));
+  assert.ok(resetCandidate >= 0 && resetCandidate < resetUserLock);
+  assert.ok(resetUserLock < resetConsumption);
+  assert.ok(calls.some(call => call.sql.includes('LIMIT 100 FOR UPDATE SKIP LOCKED') &&
+    call.sql.includes('auth_rate_limits')));
+  assert.ok(calls.some(call => call.sql.includes('auth_sessions') &&
+    call.sql.includes('LIMIT 100 FOR UPDATE SKIP LOCKED')));
   assert.throws(() => createPostgresAuthStore({ pool, schemaName: 'app"; DROP SCHEMA public;--' }), TypeError);
   assert.throws(() => createPostgresAuthStore({
     pool,

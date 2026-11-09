@@ -8,6 +8,7 @@ const migration = Object.freeze({
   sql: readFileSync(new URL('./migrations/0001_local_authentication.sql', import.meta.url), 'utf8'),
 });
 const schemaPattern = /^[a-z][a-z0-9_]{0,62}$/u;
+const CLEANUP_BATCH_SIZE = 100;
 
 function validatePool(pool) {
   if (!pool || typeof pool.connect !== 'function') {
@@ -38,6 +39,48 @@ function rowDate(value) {
   return result;
 }
 
+function deleteExpiredSessions(client, schema, now) {
+  return client.query(
+    `WITH expired AS (
+       SELECT token_hash FROM ${schema}.auth_sessions
+       WHERE expires_at <= to_timestamp($1::double precision / 1000)
+       ORDER BY expires_at, token_hash
+       LIMIT ${CLEANUP_BATCH_SIZE} FOR UPDATE SKIP LOCKED
+     )
+     DELETE FROM ${schema}.auth_sessions AS sessions
+     USING expired WHERE sessions.token_hash = expired.token_hash`,
+    [now],
+  );
+}
+
+function deleteExpiredResets(client, schema, now) {
+  return client.query(
+    `WITH expired AS (
+       SELECT token_hash FROM ${schema}.auth_password_resets
+       WHERE expires_at <= to_timestamp($1::double precision / 1000)
+       ORDER BY expires_at, token_hash
+       LIMIT ${CLEANUP_BATCH_SIZE} FOR UPDATE SKIP LOCKED
+     )
+     DELETE FROM ${schema}.auth_password_resets AS resets
+     USING expired WHERE resets.token_hash = expired.token_hash`,
+    [now],
+  );
+}
+
+function deleteExpiredRateLimits(client, schema, now) {
+  return client.query(
+    `WITH expired AS (
+       SELECT bucket_hash FROM ${schema}.auth_rate_limits
+       WHERE window_start < to_timestamp($1::double precision / 1000) - INTERVAL '1 day'
+       ORDER BY window_start, bucket_hash
+       LIMIT ${CLEANUP_BATCH_SIZE} FOR UPDATE SKIP LOCKED
+     )
+     DELETE FROM ${schema}.auth_rate_limits AS limits
+     USING expired WHERE limits.bucket_hash = expired.bucket_hash`,
+    [now],
+  );
+}
+
 export async function runAuthMigrations(pool, schemaName) {
   return runMigrations(pool, schemaName, { extensionMigrations: [migration] });
 }
@@ -59,15 +102,10 @@ export function createPostgresAuthStore(options) {
   async function purgeExpiredAuthData(now) {
     if (!Number.isSafeInteger(now) || now < 0) throw new TypeError('Invalid cleanup time.');
     return withClient(pool, async client => {
-      const sessions = await client.query(
-        `DELETE FROM ${schema}.auth_sessions WHERE expires_at <= to_timestamp($1::double precision / 1000)`,
-        [now],
-      );
-      const resets = await client.query(
-        `DELETE FROM ${schema}.auth_password_resets WHERE expires_at <= to_timestamp($1::double precision / 1000)`,
-        [now],
-      );
-      return (sessions.rowCount ?? 0) + (resets.rowCount ?? 0);
+      const sessions = await deleteExpiredSessions(client, schema, now);
+      const resets = await deleteExpiredResets(client, schema, now);
+      const limits = await deleteExpiredRateLimits(client, schema, now);
+      return (sessions.rowCount ?? 0) + (resets.rowCount ?? 0) + (limits.rowCount ?? 0);
     });
   }
 
@@ -203,10 +241,7 @@ export function createPostgresAuthStore(options) {
 
     async createResetToken(reset) {
       return withClient(pool, async client => {
-        await client.query(
-          `DELETE FROM ${schema}.auth_password_resets WHERE expires_at <= to_timestamp($1::double precision / 1000)`,
-          [reset.createdAt],
-        );
+        await deleteExpiredResets(client, schema, reset.createdAt);
         return client.query(
           `INSERT INTO ${schema}.auth_password_resets (token_hash, user_id, created_at, expires_at)
            VALUES ($1, $2, to_timestamp($3::double precision / 1000), to_timestamp($4::double precision / 1000))`,
@@ -226,14 +261,35 @@ export function createPostgresAuthStore(options) {
       return withClient(pool, async client => {
         await client.query('BEGIN');
         try {
-          const consumed = await client.query(
-            `DELETE FROM ${schema}.auth_password_resets
-             WHERE token_hash = $1 AND expires_at > to_timestamp($2::double precision / 1000)
-             RETURNING user_id`,
+          const candidate = await client.query(
+            `SELECT user_id FROM ${schema}.auth_password_resets
+             WHERE token_hash = $1 AND expires_at > GREATEST(
+               to_timestamp($2::double precision / 1000), clock_timestamp()
+             )`,
             [tokenHash, now],
           );
-          const userId = consumed.rows[0]?.user_id;
+          const userId = candidate.rows[0]?.user_id;
           if (!userId) {
+            await client.query('ROLLBACK');
+            return false;
+          }
+          const user = await client.query(
+            `SELECT id FROM ${schema}.auth_users WHERE id = $1 FOR UPDATE`,
+            [userId],
+          );
+          if (user.rows.length !== 1) {
+            await client.query('ROLLBACK');
+            return false;
+          }
+          const consumed = await client.query(
+            `DELETE FROM ${schema}.auth_password_resets
+             WHERE token_hash = $1 AND user_id = $2 AND expires_at > GREATEST(
+               to_timestamp($3::double precision / 1000), clock_timestamp()
+             )
+             RETURNING user_id`,
+            [tokenHash, userId, now],
+          );
+          if (consumed.rows.length !== 1) {
             await client.query('ROLLBACK');
             return false;
           }
@@ -264,11 +320,7 @@ export function createPostgresAuthStore(options) {
 
     async consumeRateLimit(key, limit, windowMs, now) {
       return withClient(pool, async client => {
-        await client.query(
-          `DELETE FROM ${schema}.auth_rate_limits
-           WHERE window_start < to_timestamp($1::double precision / 1000) - INTERVAL '1 day'`,
-          [now],
-        );
+        await deleteExpiredRateLimits(client, schema, now);
         const result = await client.query(
           `INSERT INTO ${schema}.auth_rate_limits AS current (bucket_hash, window_start, attempts)
            VALUES ($1, to_timestamp($4::double precision / 1000), 1)

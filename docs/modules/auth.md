@@ -2,14 +2,17 @@
 
 **Version :** `1.0.0` · **API :** `createAuthService`, `createPostgresAuthStore`,
 `runAuthMigrations` · **Statut :** implémenté pour le stockage PostgreSQL local
-injecté et les flux de compte/session ; aucune authentification hébergée ni
-notification distante n'est configurée.
+injecté et les flux de compte/session ; ce module n'est pas encore relié au
+scaffold `auth` du générateur. Aucune authentification hébergée ni notification
+distante n'est configurée.
 
 Le module utilise uniquement les API cryptographiques intégrées à Node.js et le
 pool PostgreSQL fourni par l'application. Il n'ouvre aucune connexion réseau,
 n'ajoute aucune dépendance à la racine Factory et ne crée aucun compte au
 démarrage. L'application doit fournir une origine canonique et un canal local
-de reset explicitement contrôlé.
+de reset explicitement contrôlé. La génération v1/v2 conserve son ancien
+`lib/auth.mjs` de frontière de session ; cette livraison ne le remplace pas et
+ne prétend pas fournir cette implémentation dans une application générée.
 
 ## Contrat et limites
 
@@ -73,9 +76,12 @@ empreintes de tokens et compteurs. Les opérations de login, rotation et reset
 sont transactionnelles ; login verrouille le compte et compare de nouveau le
 hash de mot de passe avant de créer la session. La rotation verrouille aussi le
 compte pendant son remplacement. Ainsi, un reset concurrent ne peut pas laisser
-une session issue de l'ancien mot de passe. La consommation de jeton est
-atomique. Les lignes expirées sont supprimées lors des créations et
-`purgeExpiredAuthData(now)` permet un nettoyage périodique explicite. Le pool
+une session issue de l'ancien mot de passe. Le reset verrouille le compte avant
+de consommer son jeton, ce qui sérialise plusieurs resets concurrents. La
+consommation de jeton est atomique. Les lignes expirées sont supprimées lors des créations et
+`purgeExpiredAuthData(now)` permet un nettoyage périodique explicite. Chaque
+nettoyage traite au plus 100 sessions, resets et compteurs par table et utilise
+`SKIP LOCKED` ; la maintenance peut répéter l'appel jusqu'à obtenir `0`. Le pool
 doit utiliser un rôle runtime dédié aux droits minimaux, et non le rôle de
 migration ou un superuser. Cette migration ajoute uniquement les tables `auth_*` ; elle ne
 modifie pas les tables ni les migrations du module database.
@@ -131,9 +137,10 @@ suivants (les noms de méthodes sont normatifs) :
 | `consumeRateLimit(key, limit, windowMs, now)` | Incrémente atomiquement un compteur persistant et retourne le booléen d'autorisation. |
 
 L'adaptateur PostgreSQL expose aussi `purgeExpiredAuthData(now)`. Appelez-le
-périodiquement depuis une maintenance locale de l'application ; les créations
-de session et de reset nettoient également leurs lignes expirées de façon
-opportuniste. Aucun job réseau ou service planifié n'est installé par le module.
+périodiquement depuis une maintenance locale de l'application, en répétant tant
+que l'appel supprime des lignes ; les créations de session et de reset nettoient
+également un lot d'au plus 100 lignes expirées de façon opportuniste. Aucun job
+réseau ou service planifié n'est installé par le module.
 
 Un magasin volatil ou non atomique ne satisfait pas ce contrat. Les tests Factory
 utilisent un magasin local synthétique conservé entre instances de service ;
