@@ -2,6 +2,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  buildProjectV2,
+  migrateV1Config as migrateV1ConfigV2,
+} from './factory/generator-v2.mjs';
 
 const moduleOrder = ['ai-disabled', 'api', 'auth', 'billing-test', 'media'];
 const allowedModules = new Set(moduleOrder);
@@ -576,7 +580,7 @@ function checkDestination(outputRoot, projectSlug, createRoot) {
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
-  return { root, destination };
+  return { root, destination, rootExists: rootStatus.exists };
 }
 
 function writeFiles(destination, files) {
@@ -602,11 +606,36 @@ function writeFiles(destination, files) {
   }
 }
 
+function generateProjectV2({ config, outputRoot, write = false }) {
+  const built = buildProjectV2({
+    config,
+    outputRoot,
+    mode: write ? 'write' : 'dry-run',
+    validateV1Config: validateConfig,
+    renderFiles,
+    checkDestination,
+  });
+  if (write) {
+    if (!built.rootExists) assertSafeDirectory(built.root, true);
+    checkDestination(built.root, built.projectSlug, false);
+    writeFiles(built.destination, built.report.files);
+  }
+  return built.report.manifest;
+}
+
+function migrateV1Config(value, migration) {
+  return migrateV1ConfigV2(value, migration, validateConfig);
+}
+
 function generateProject({ configText, outputRoot, write = false }) {
   if (typeof outputRoot !== 'string' || outputRoot.trim().length === 0) {
     throw new Error('An explicit --output-root is required.');
   }
-  const config = validateConfig(parseConfigText(configText));
+  const parsed = parseConfigText(configText);
+  if (parsed?.schemaVersion === 2) {
+    return generateProjectV2({ config: parsed, outputRoot, write });
+  }
+  const config = validateConfig(parsed);
   const files = renderFiles(config);
   const { root, destination } = checkDestination(outputRoot, config.projectSlug, write);
   if (write) {
@@ -694,4 +723,4 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
   main();
 }
 
-export { generateProject, parseConfigText, validateConfig };
+export { generateProject, generateProjectV2, migrateV1Config, parseConfigText, validateConfig };
