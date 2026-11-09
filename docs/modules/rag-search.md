@@ -29,17 +29,18 @@ déclare exactement :
   fingerprint: '<sha256 du bundle local exact>',
   license: 'Apache-2.0',
   runtime: 'local',
+  device: 'cpu',
   embedBatch: async texts => vectors
 }
 ```
 
 Le runtime doit charger un modèle déjà installé sur la machine. L'adaptateur
-doit vérifier la version et l'empreinte du bundle avant de servir, rester sur
-CPU si c'est la cible choisie, et ne jamais effectuer de téléchargement ou
-d'appel réseau. Le module valide la forme, les dimensions et les valeurs des
-vecteurs, puis les normalise L2. Un changement de modèle, version, empreinte ou
-dimension refuse l'index existant (`EMBEDDING_MODEL_MISMATCH`) au lieu de
-mélanger des espaces vectoriels.
+doit vérifier la version et l'empreinte du bundle avant de servir, déclarer
+`device: 'cpu'` et ne jamais effectuer de téléchargement ou d'appel réseau. Le
+module valide la forme, les dimensions et les valeurs des vecteurs, puis les
+normalise L2. Un changement de modèle, version, empreinte ou dimension refuse
+l'index existant (`EMBEDDING_MODEL_MISMATCH`) au lieu de mélanger des espaces
+vectoriels.
 
 ```js
 import { createRagSearchService } from './modules/rag-search/index.mjs';
@@ -132,7 +133,7 @@ Budgets par défaut configurables dans leurs bornes :
 | Budget | Valeur |
 | --- | ---: |
 | Textes par lot d'embeddings | 32 |
-| Cache LRU par service | 2 048 textes par tenant/modèle |
+| Cache LRU par service | 2 048 entrées totales, séparées par tenant/modèle |
 | Chunks par document | 5 000 |
 | Documents indexés par tenant | 1 000 |
 | Métadonnées par document ou filtre | 32 |

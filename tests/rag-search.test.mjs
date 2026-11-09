@@ -132,6 +132,20 @@ test('indexes ingestion output locally and returns ranked citations with measure
   }))).results, []);
 });
 
+test('preserves source chunk text and offsets while normalizing ranking tokens', async () => {
+  const { service } = createHarness();
+  const sourceText = 'Ａccess control policy';
+  const source = document('15000000-0000-4000-8000-000000000001', 'unicode-guide', sourceText);
+  await service.indexDocument(indexInput(source));
+  const result = await service.search(searchInput({
+    query: 'access control',
+    mode: 'lexical',
+  }));
+  assert.equal(result.results[0].text, sourceText);
+  assert.equal(result.results[0].citation.startOffset, 0);
+  assert.equal(result.results[0].citation.endOffset, sourceText.length);
+});
+
 test('applies document ACLs and tenant isolation before returning search results', async () => {
   const { service, values } = createHarness();
   const privateDoc = document('30000000-0000-4000-8000-000000000003',
@@ -153,6 +167,29 @@ test('applies document ACLs and tenant isolation before returning search results
   });
   await expectCode(service.indexDocument(unauthorized), 'DOCUMENT_ACCESS_DENIED');
   assert.equal(values.size, 1);
+});
+
+test('updates metadata and ACL for the same document version without recomputing vectors', async () => {
+  const { service } = createHarness();
+  const source = document('35000000-0000-4000-8000-000000000003',
+    'shared-guide', 'access control policy');
+  await service.indexDocument(indexInput(source));
+  const update = await service.indexDocument(indexInput(source, {
+    cookieHeader: 'bob',
+    metadata: { category: 'restricted' },
+    acl: { readerIds: [BOB], roles: [] },
+  }));
+  assert.equal(update.indexed, false);
+  assert.equal(update.updated, true);
+  assert.deepEqual((await service.search(searchInput({
+    query: 'access control',
+  }))).results, []);
+  const bobResults = await service.search(searchInput({
+    cookieHeader: 'bob',
+    query: 'access control',
+    filters: { category: 'restricted' },
+  }));
+  assert.equal(bobResults.results[0].citation.documentId, source.id);
 });
 
 test('uses bounded batched embeddings and caches by tenant and model fingerprint', async () => {
@@ -208,8 +245,12 @@ test('fails closed on invalid embeddings, model dimension changes, and corrupt d
 
 test('returns no matches for irrelevant queries and rejects malformed inputs or missing authorization', async () => {
   const harness = createHarness();
-  await harness.service.indexDocument(indexInput(document(
-    '90000000-0000-4000-8000-000000000009', 'access', 'access control policy')));
+  const validDoc = document(
+    '90000000-0000-4000-8000-000000000009', 'access', 'access control policy');
+  const malformedDoc = structuredClone(validDoc);
+  malformedDoc.chunks[0].text = 'tampered document text';
+  await expectCode(harness.service.indexDocument(indexInput(malformedDoc)), 'INVALID_DOCUMENT');
+  await harness.service.indexDocument(indexInput(validDoc));
   assert.deepEqual((await harness.service.search(searchInput({
     query: 'quantum zebra',
     mode: 'lexical',

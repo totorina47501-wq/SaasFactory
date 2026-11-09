@@ -47,6 +47,21 @@ function exactObject(value, allowed, required = allowed, errorCode = 'INVALID_IN
   return result;
 }
 
+function dataArray(value, errorCode, maximum) {
+  if (!Array.isArray(value) || value.length > maximum) fail(errorCode);
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || !keys.includes('length')) fail(errorCode);
+  const keySet = new Set(keys);
+  const result = [];
+  for (let index = 0; index < value.length; index += 1) {
+    if (!keySet.has(String(index))) fail(errorCode);
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) fail(errorCode);
+    result.push(descriptor.value);
+  }
+  return result;
+}
+
 function safeInteger(value, minimum, maximum) {
   return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 }
@@ -89,7 +104,7 @@ function digest(value) {
 
 function validateEmbedder(value) {
   const embedder = exactObject(value,
-    ['contractVersion', 'modelId', 'modelVersion', 'dimensions', 'fingerprint', 'license', 'runtime', 'embedBatch']);
+    ['contractVersion', 'modelId', 'modelVersion', 'dimensions', 'fingerprint', 'license', 'runtime', 'device', 'embedBatch']);
   if (embedder.contractVersion !== CONTRACT_VERSION ||
       typeof embedder.modelId !== 'string' || !MODEL_ID.test(embedder.modelId) ||
       typeof embedder.modelVersion !== 'string' || embedder.modelVersion.length < 1 ||
@@ -99,6 +114,7 @@ function validateEmbedder(value) {
       typeof embedder.license !== 'string' || embedder.license.length < 1 ||
       embedder.license.length > 120 || !embedder.license.isWellFormed() ||
       !['local', 'test'].includes(embedder.runtime) ||
+      embedder.device !== 'cpu' ||
       typeof embedder.embedBatch !== 'function') fail('INVALID_CONFIGURATION');
   if (embedder.runtime === 'test' && !embedder.modelId.startsWith('test/')) {
     fail('INVALID_CONFIGURATION');
@@ -133,14 +149,14 @@ function validateMetadata(value, maxEntries, errorCode = 'INVALID_INPUT') {
 
 function validateAcl(value, errorCode = 'INVALID_INPUT') {
   const acl = exactObject(value, ['readerIds', 'roles'], undefined, errorCode);
-  if (!Array.isArray(acl.readerIds) || !Array.isArray(acl.roles) ||
-      acl.readerIds.length + acl.roles.length < 1 ||
-      acl.readerIds.length > 100 || acl.roles.length > 32) fail(errorCode);
-  const readerIds = acl.readerIds.map(id => {
+  const rawReaderIds = dataArray(acl.readerIds, errorCode, 100);
+  const rawRoles = dataArray(acl.roles, errorCode, 32);
+  if (rawReaderIds.length + rawRoles.length < 1) fail(errorCode);
+  const readerIds = rawReaderIds.map(id => {
     if (typeof id !== 'string' || !UUID.test(id)) fail(errorCode);
     return id.toLowerCase();
   });
-  const roles = acl.roles.map(role => {
+  const roles = rawRoles.map(role => {
     if (typeof role !== 'string' || !ROLES.test(role)) fail(errorCode);
     return role;
   });
@@ -152,7 +168,8 @@ function validateDocument(value, limits) {
   const document = exactObject(value,
     ['id', 'sourceId', 'fileName', 'format', 'version', 'sha256', 'chunks',
       'text', 'pageCount', 'createdAt', 'deduplicated'],
-    ['id', 'sourceId', 'fileName', 'format', 'version', 'sha256', 'chunks']);
+    ['id', 'sourceId', 'fileName', 'format', 'version', 'sha256', 'text',
+      'pageCount', 'createdAt', 'chunks']);
   if (typeof document.id !== 'string' || !UUID.test(document.id) ||
       typeof document.sourceId !== 'string' || !SAFE_ID.test(document.sourceId) ||
       typeof document.fileName !== 'string' || document.fileName.length < 1 ||
@@ -160,29 +177,30 @@ function validateDocument(value, limits) {
       !['txt', 'markdown', 'html', 'pdf', 'docx'].includes(document.format) ||
       !safeInteger(document.version, 1, 1_000_000) ||
       typeof document.sha256 !== 'string' || !HASH.test(document.sha256) ||
-      !Array.isArray(document.chunks) || document.chunks.length < 1 ||
-      document.chunks.length > limits.maxChunksPerDocument) fail('INVALID_DOCUMENT');
-  if (Object.hasOwn(document, 'text') &&
-      (typeof document.text !== 'string' || !document.text.isWellFormed() || document.text.length > 2 * 1024 * 1024) ||
-      Object.hasOwn(document, 'pageCount') && !safeInteger(document.pageCount, 1, 1000) ||
-      Object.hasOwn(document, 'createdAt') && !safeInteger(document.createdAt, 0, Number.MAX_SAFE_INTEGER) ||
-      Object.hasOwn(document, 'deduplicated') && typeof document.deduplicated !== 'boolean') {
+      typeof document.text !== 'string' || !document.text.isWellFormed() ||
+      document.text.includes('\0') || document.text.length > 2 * 1024 * 1024 ||
+      !safeInteger(document.pageCount, 1, 1000) ||
+      !safeInteger(document.createdAt, 0, Number.MAX_SAFE_INTEGER)) fail('INVALID_DOCUMENT');
+  const rawChunks = dataArray(document.chunks, 'INVALID_DOCUMENT', limits.maxChunksPerDocument);
+  if (rawChunks.length < 1) fail('INVALID_DOCUMENT');
+  if (Object.hasOwn(document, 'deduplicated') && typeof document.deduplicated !== 'boolean') {
     fail('INVALID_DOCUMENT');
   }
   const seen = new Set();
-  const chunks = document.chunks.map(rawChunk => {
+  const chunks = rawChunks.map(rawChunk => {
     const chunk = exactObject(rawChunk,
       ['index', 'sourceId', 'fileName', 'page', 'startOffset', 'endOffset', 'sha256', 'text'],
       ['index', 'sourceId', 'fileName', 'page', 'startOffset', 'endOffset', 'sha256', 'text'],
       'INVALID_DOCUMENT');
     if (!safeInteger(chunk.index, 0, limits.maxChunksPerDocument - 1) ||
         chunk.sourceId !== document.sourceId || chunk.fileName !== document.fileName ||
-        !(chunk.page === null || safeInteger(chunk.page, 1, 1_000_000)) ||
+        !(chunk.page === null || safeInteger(chunk.page, 1, document.pageCount)) ||
         !safeInteger(chunk.startOffset, 0, Number.MAX_SAFE_INTEGER) ||
-        !safeInteger(chunk.endOffset, chunk.startOffset + 1, Number.MAX_SAFE_INTEGER) ||
+        !safeInteger(chunk.endOffset, chunk.startOffset + 1, document.text.length) ||
         typeof chunk.sha256 !== 'string' || chunk.sha256 !== document.sha256 ||
-        typeof chunk.text !== 'string' || !chunk.text.isWellFormed() ||
-        chunk.text.length < 1 || chunk.text.length > 100_000 || seen.has(chunk.index)) {
+        typeof chunk.text !== 'string' || !chunk.text.isWellFormed() || chunk.text.includes('\0') ||
+        chunk.text.length < 1 || chunk.text.length > 100_000 || seen.has(chunk.index) ||
+        document.text.slice(chunk.startOffset, chunk.endOffset) !== chunk.text) {
       fail('INVALID_DOCUMENT');
     }
     seen.add(chunk.index);
@@ -192,9 +210,10 @@ function validateDocument(value, limits) {
       startOffset: chunk.startOffset,
       endOffset: chunk.endOffset,
       sha256: chunk.sha256,
-      text: normalizeText(chunk.text, 100_000, 'INVALID_DOCUMENT'),
+      text: chunk.text,
     };
   }).sort((left, right) => left.index - right.index);
+  if (chunks.some((chunk, index) => chunk.index !== index)) fail('INVALID_DOCUMENT');
   return {
     id: document.id.toLowerCase(),
     sourceId: document.sourceId,
@@ -202,16 +221,18 @@ function validateDocument(value, limits) {
     format: document.format,
     version: document.version,
     sha256: document.sha256,
+    pageCount: document.pageCount,
     chunks,
   };
 }
 
 function vectorArray(value, dimensions, errorCode = 'CORRUPT_INDEX') {
-  if (!Array.isArray(value) || value.length !== dimensions ||
-      value.some(item => typeof item !== 'number' || !Number.isFinite(item))) fail(errorCode);
-  const norm = Math.sqrt(value.reduce((sum, item) => sum + item * item, 0));
+  const vector = dataArray(value, errorCode, dimensions);
+  if (vector.length !== dimensions ||
+      vector.some(item => typeof item !== 'number' || !Number.isFinite(item))) fail(errorCode);
+  const norm = Math.sqrt(vector.reduce((sum, item) => sum + item * item, 0));
   if (!Number.isFinite(norm) || norm <= 0) fail(errorCode);
-  return value.map(item => item / norm);
+  return vector.map(item => item / norm);
 }
 
 function validateIndex(value, embedder, limits) {
@@ -219,7 +240,7 @@ function validateIndex(value, embedder, limits) {
     ['contractVersion', 'embedding', 'documents'], undefined, 'CORRUPT_INDEX');
   const embedding = exactObject(index.embedding,
     ['modelId', 'modelVersion', 'fingerprint', 'dimensions'], undefined, 'CORRUPT_INDEX');
-  if (index.contractVersion !== CONTRACT_VERSION || !Array.isArray(index.documents) ||
+  if (index.contractVersion !== CONTRACT_VERSION ||
       !safeInteger(embedding.dimensions, 1, 8192) || typeof embedding.modelId !== 'string' ||
       !MODEL_ID.test(embedding.modelId) || typeof embedding.modelVersion !== 'string' ||
       embedding.modelVersion.length < 1 || embedding.modelVersion.length > 64 ||
@@ -231,11 +252,13 @@ function validateIndex(value, embedder, limits) {
       embedding.fingerprint !== embedder.fingerprint || embedding.dimensions !== embedder.dimensions) {
     fail('EMBEDDING_MODEL_MISMATCH');
   }
-  if (index.documents.length > limits.maxDocuments) fail('CORRUPT_INDEX');
+  const rawDocuments = dataArray(index.documents, 'CORRUPT_INDEX', limits.maxDocuments);
   const ids = new Set();
-  const documents = index.documents.map(rawDocument => {
+  let totalChunks = 0;
+  const documents = rawDocuments.map(rawDocument => {
     const document = exactObject(rawDocument,
-      ['id', 'sourceId', 'fileName', 'format', 'version', 'sha256', 'metadata', 'acl', 'chunks'],
+      ['id', 'sourceId', 'fileName', 'format', 'version', 'sha256', 'pageCount',
+        'metadata', 'acl', 'chunks'],
       undefined, 'CORRUPT_INDEX');
     if (typeof document.id !== 'string' || !UUID.test(document.id) ||
         typeof document.sourceId !== 'string' || !SAFE_ID.test(document.sourceId) ||
@@ -244,21 +267,28 @@ function validateIndex(value, embedder, limits) {
         !['txt', 'markdown', 'html', 'pdf', 'docx'].includes(document.format) ||
         !safeInteger(document.version, 1, 1_000_000) ||
         typeof document.sha256 !== 'string' || !HASH.test(document.sha256) ||
-        !Array.isArray(document.chunks) || document.chunks.length < 1 ||
-        document.chunks.length > limits.maxChunksPerDocument || ids.has(document.id)) fail('CORRUPT_INDEX');
-    ids.add(document.id);
-    const metadata = validateMetadata(document.metadata, 256, 'CORRUPT_INDEX');
+        !safeInteger(document.pageCount, 1, 1000) ||
+        ids.has(document.id.toLowerCase())) fail('CORRUPT_INDEX');
+    const rawChunks = dataArray(document.chunks, 'CORRUPT_INDEX', limits.maxChunksPerDocument);
+    if (rawChunks.length < 1) fail('CORRUPT_INDEX');
+    totalChunks += rawChunks.length;
+    if (totalChunks * embedding.dimensions > Math.floor(limits.maxStoredBytes / 24)) {
+      fail('CORRUPT_INDEX');
+    }
+    ids.add(document.id.toLowerCase());
+    const metadata = validateMetadata(document.metadata, limits.maxMetadataEntries, 'CORRUPT_INDEX');
     const acl = validateAcl(document.acl, 'CORRUPT_INDEX');
-    const chunks = document.chunks.map(rawChunk => {
+    const chunks = rawChunks.map(rawChunk => {
       const chunk = exactObject(rawChunk,
         ['index', 'page', 'startOffset', 'endOffset', 'sha256', 'text', 'vector'],
         undefined, 'CORRUPT_INDEX');
       if (!safeInteger(chunk.index, 0, 100_000) ||
-          !(chunk.page === null || safeInteger(chunk.page, 1, 1_000_000)) ||
+          !(chunk.page === null || safeInteger(chunk.page, 1, document.pageCount)) ||
           !safeInteger(chunk.startOffset, 0, Number.MAX_SAFE_INTEGER) ||
           !safeInteger(chunk.endOffset, chunk.startOffset + 1, Number.MAX_SAFE_INTEGER) ||
           chunk.sha256 !== document.sha256 || typeof chunk.text !== 'string' ||
-          !chunk.text.isWellFormed() || chunk.text.length < 1 || chunk.text.length > 100_000) {
+          !chunk.text.isWellFormed() || chunk.text.includes('\0') ||
+          chunk.text.length < 1 || chunk.text.length > 100_000) {
         fail('CORRUPT_INDEX');
       }
       return {
@@ -278,6 +308,7 @@ function validateIndex(value, embedder, limits) {
       format: document.format,
       version: document.version,
       sha256: document.sha256,
+      pageCount: document.pageCount,
       metadata,
       acl,
       chunks,
@@ -291,7 +322,7 @@ function validateIndex(value, embedder, limits) {
 }
 
 function tokenList(text) {
-  return text.toLocaleLowerCase('und').match(/[\p{L}\p{N}]+/gu) ?? [];
+  return text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
 function cosine(left, right) {
@@ -306,6 +337,15 @@ function metadataMatches(metadata, filters) {
 function sameEmbedding(left, right) {
   return left.modelId === right.modelId && left.modelVersion === right.modelVersion &&
     left.fingerprint === right.fingerprint && left.dimensions === right.dimensions;
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(key =>
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 export function createRagSearchService(options) {
@@ -369,7 +409,7 @@ export function createRagSearchService(options) {
     } catch {
       fail('STORAGE_UNAVAILABLE');
     }
-    if (stored === undefined || stored === null) return { index: null, version: undefined };
+    if (stored === undefined) return { index: null, version: undefined };
     try {
       const record = exactObject(stored, ['value', 'version'], undefined, 'CORRUPT_INDEX');
       if (!safeInteger(record.version, 1, Number.MAX_SAFE_INTEGER)) fail('CORRUPT_INDEX');
@@ -416,8 +456,9 @@ export function createRagSearchService(options) {
       } catch {
         fail('EMBEDDING_UNAVAILABLE');
       }
-      if (!Array.isArray(rawVectors) || rawVectors.length !== batch.length) fail('INVALID_EMBEDDING');
-      rawVectors.forEach((rawVector, localIndex) => {
+      const batchVectors = dataArray(rawVectors, 'INVALID_EMBEDDING', limits.batchSize);
+      if (batchVectors.length !== batch.length) fail('INVALID_EMBEDDING');
+      batchVectors.forEach((rawVector, localIndex) => {
         const vector = vectorArray(rawVector, embedder.dimensions, 'INVALID_EMBEDDING');
         const position = missingPositions[offset + localIndex];
         const key = missingKeys[offset + localIndex];
@@ -432,7 +473,9 @@ export function createRagSearchService(options) {
     const serialized = JSON.stringify(index);
     if (Buffer.byteLength(serialized, 'utf8') > limits.maxStoredBytes) fail('STORAGE_LIMIT');
     try {
-      return await store.put(context, INDEX_KEY, index, expectedVersion);
+      const version = await store.put(context, INDEX_KEY, index, expectedVersion);
+      if (!safeInteger(version, 1, Number.MAX_SAFE_INTEGER)) fail('STORAGE_UNAVAILABLE');
+      return version;
     } catch (error) {
       if (error?.code === 'CONFLICT') return null;
       fail('STORAGE_UNAVAILABLE');
@@ -462,17 +505,47 @@ export function createRagSearchService(options) {
         }
         const existing = current.index?.documents.find(entry => entry.id === document.id);
         if (existing && existing.version > document.version) fail('STALE_DOCUMENT_VERSION');
+        const indexedChunkCount = current.index?.documents.reduce((total, entry) =>
+          total + entry.chunks.length, 0) ?? 0;
+        const nextChunkCount = indexedChunkCount - (existing?.chunks.length ?? 0) + document.chunks.length;
+        if (nextChunkCount * embedder.dimensions > Math.floor(limits.maxStoredBytes / 24)) {
+          fail('STORAGE_LIMIT');
+        }
         if (existing && existing.version === document.version) {
           if (existing.sha256 !== document.sha256) fail('DOCUMENT_VERSION_CONFLICT');
-          return Object.freeze({
-            id: document.id,
-            version: document.version,
-            chunkCount: existing.chunks.length,
-            indexed: false,
-          });
+          if (canonicalJson(existing.metadata) === canonicalJson(metadata) &&
+              canonicalJson(existing.acl) === canonicalJson(acl)) {
+            return Object.freeze({
+              id: document.id,
+              version: document.version,
+              chunkCount: existing.chunks.length,
+              indexed: false,
+              updated: false,
+            });
+          }
+          const documents = current.index.documents.map(entry => entry.id === document.id
+            ? { ...candidate, chunks: existing.chunks }
+            : entry);
+          const nextIndex = {
+            contractVersion: CONTRACT_VERSION,
+            embedding: embeddingInfo,
+            documents,
+          };
+          const version = await writeIndex(context, nextIndex, current.version);
+          if (version !== null) {
+            return Object.freeze({
+              id: document.id,
+              version: document.version,
+              chunkCount: existing.chunks.length,
+              indexed: false,
+              updated: true,
+            });
+          }
+          continue;
         }
         if (!indexedChunks) {
-          const vectors = await embedTexts(context.tenantId, document.chunks.map(chunk => chunk.text));
+          const vectors = await embedTexts(context.tenantId,
+            document.chunks.map(chunk => chunk.text.normalize('NFKC')));
           indexedChunks = document.chunks.map((chunk, index) => ({
             index: chunk.index,
             page: chunk.page,
@@ -607,6 +680,7 @@ export function createDeterministicTestEmbedder({ dimensions = 128 } = {}) {
     fingerprint,
     license: 'MIT (test implementation)',
     runtime: 'test',
+    device: 'cpu',
     async embedBatch(texts) {
       if (!Array.isArray(texts) || texts.some(text =>
         typeof text !== 'string' || !text.isWellFormed())) fail('INVALID_INPUT');
