@@ -678,7 +678,7 @@ async function completedCopilotSession({github, owner, repo, pr}) {
 }
 
 async function prepareCompletedCopilotPullRequest({
-  github, owner, repo, pr, task, issue, workflow, mainSha
+  github, owner, repo, pr, task, issue, workflow, mainSha, diagnose = () => {}
 }) {
   // Preparation modifies only the PR branch or draft status, never protected main.
   if (pr.state !== 'open' || pr.merged === true || pr.base?.ref !== 'main' ||
@@ -689,9 +689,9 @@ async function prepareCompletedCopilotPullRequest({
     /^\s*(?:\[WIP\]|WIP\b)/i.test(pr.title || '') ||
     !taskMatchesAuthorizedIssue(task, issue) ||
     linkedIssueNumbers(pr.body || '').length !== 1 ||
-    linkedIssueNumbers(pr.body || '')[0] !== task.issue) return null;
+    linkedIssueNumbers(pr.body || '')[0] !== task.issue) { diagnose('preconditions'); return null; }
   if (!pr.draft && pr.base?.sha === mainSha) return null;
-  if (!await completedCopilotSession({github, owner, repo, pr})) return null;
+  if (!await completedCopilotSession({github, owner, repo, pr})) { diagnose('copilot-session-unverified'); return null; }
   const files = await github.paginate(github.rest.pulls.listFiles, {
     owner, repo, pull_number: pr.number, per_page: 100
   });
@@ -701,7 +701,7 @@ async function prepareCompletedCopilotPullRequest({
       (file.previous_filename != null && typeof file.previous_filename !== 'string')) ||
     new Set(files.map(file => file.filename)).size !== files.length ||
     files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean))
-      .some(filename => !pathAllowed(filename, task.files))) return null;
+      .some(filename => !pathAllowed(filename, task.files))) { diagnose('scope-or-files-unverified'); return null; }
   const [currentPr, currentIssue, currentMain] = await Promise.all([
     github.rest.pulls.get({owner, repo, pull_number: pr.number}),
     github.rest.issues.get({owner, repo, issue_number: task.issue}),
@@ -716,9 +716,9 @@ async function prepareCompletedCopilotPullRequest({
     latest.user?.login?.toLowerCase() !== pr.user?.login?.toLowerCase() ||
     linkedIssueNumbers(latest.body || '').length !== 1 ||
     linkedIssueNumbers(latest.body || '')[0] !== task.issue ||
-    !await completedCopilotSession({github, owner, repo, pr: latest})) return null;
+    !await completedCopilotSession({github, owner, repo, pr: latest})) { diagnose('latest-evidence-changed'); return null; }
   if (latest.base.sha !== mainSha) {
-    if (latest.mergeable_state === 'dirty') return null;
+    if (latest.mergeable_state === 'dirty') { diagnose('merge-conflict'); return null; }
     // GitHub verifies the expected PR head; no forced update, no main bypass.
     const updated = await github.rest.pulls.updateBranch({
       owner, repo, pull_number: latest.number, expected_head_sha: latest.head.sha
@@ -726,19 +726,19 @@ async function prepareCompletedCopilotPullRequest({
     assert(updated.status === 202, 'Branch refresh was not accepted by GitHub');
     return 'branch-updated';
   }
-  if (!latest.draft) return null;
+  if (!latest.draft) { diagnose('already-ready'); return null; }
   if (!await trustedCi(github, owner, repo, workflow, latest.head.sha, latest.number) ||
     !await trustedFreeReview(github, owner, repo, workflow, latest.head.sha, latest.number) ||
     !await trustedReview({
       github, owner, repo, pr: latest,
       changedFiles: files.map(file => file.filename), headSha: latest.head.sha
-    })) return null;
+    })) { diagnose('ci-or-review-evidence-unverified'); return null; }
   const result = await github.graphql(
     'query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id isDraft headRefOid}}}',
     {owner, repo, number: latest.number}
   );
   const node = result?.repository?.pullRequest;
-  if (!node?.id || node.isDraft !== true || node.headRefOid !== latest.head.sha) return null;
+  if (!node?.id || node.isDraft !== true || node.headRefOid !== latest.head.sha) { diagnose('draft-graphql-stale'); return null; }
   const mark = await github.graphql(
     'mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id isDraft headRefOid}}}',
     {id: node.id}
@@ -750,7 +750,7 @@ async function prepareCompletedCopilotPullRequest({
 }
 
 async function run({github, context, core, io = fs}) {
-  const report = {decision: 'none', promoted: [], prepared: [], merged: [], blockers: []};
+  const report = {decision: 'none', promoted: [], prepared: [], waiting: [], merged: [], blockers: []};
   const expectedRepo = process.env.EXPECTED_REPO;
   if (`${context.repo.owner}/${context.repo.repo}` !== REPOSITORY ||
     expectedRepo !== REPOSITORY || context.ref !== 'refs/heads/main' ||
@@ -815,11 +815,16 @@ async function run({github, context, core, io = fs}) {
         const detailedPr = (await github.rest.pulls.get({owner, repo, pull_number: pr.number})).data;
         if (!await dependenciesReady({
           github, owner, repo, task, tasks, issuesByNumber, allPrs, cache: dependencyCache
-        })) continue;
+        })) {
+          if (detailedPr.draft) report.waiting.push({pr: pr.number, reason: 'dependencies-unverified'});
+          continue;
+        }
         const latestIssue = await github.rest.issues.get({owner, repo, issue_number: task.issue});
         if (!taskMatchesAuthorizedIssue(task, latestIssue.data)) {
           if (task.existingWork) {
             report.blockers.push(`existing-work-metadata:#${task.issue}/PR#${pr.number}`);
+          } else if (detailedPr.draft) {
+            report.waiting.push({pr: pr.number, reason: 'issue-authorization-unverified'});
           }
           continue;
         }
@@ -828,7 +833,8 @@ async function run({github, context, core, io = fs}) {
           try {
             preparation = await prepareCompletedCopilotPullRequest({
               github, owner, repo, pr: detailedPr, task, issue: latestIssue.data,
-              workflow, mainSha: main.data.commit.sha
+              workflow, mainSha: main.data.commit.sha,
+              diagnose: reason => report.waiting.push({pr: pr.number, reason})
             });
           } catch (error) {
             report.blockers.push('copilot-pr-preparation:#' + pr.number +
