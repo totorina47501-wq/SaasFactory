@@ -92,7 +92,8 @@ async function setup(t, {
       delayMs: ffmpegDelayMs,
       checkArgs: `if (!args.includes('-nostdin') || args.includes('-y') || args.includes('-f')) {
   if (!args.includes('-f') || !args.includes('pipe:1')) process.exit(22);
-}`,
+}
+if (args.filter(argument => argument === '-threads').length !== 2) process.exit(23);`,
     }),
   ]);
   const events = [];
@@ -222,6 +223,14 @@ test('fails closed on unavailable engines, invalid engine output, cancellation, 
   await expectCode(timeout.service.thumbnail({
     ...auth(), videoId: timedVideo.id, atSeconds: 1, signal: cancelled.signal,
   }), 'INTERRUPTED');
+
+  const outputLimit = await setup(t, {
+    limits: { maxOutputBytes: 8 },
+  });
+  const boundedVideo = await outputLimit.service.ingest(ingestInput());
+  await expectCode(outputLimit.service.frame({
+    ...auth(), videoId: boundedVideo.id, atSeconds: 1,
+  }), 'OUTPUT_TOO_LARGE');
 });
 
 test('enforces job and storage quotas and removes expired media and artifacts', async t => {
@@ -283,4 +292,34 @@ test('rejects unauthorized tenants and unsafe storage paths', async t => {
     tenancy: tenancy(),
     audit: { append: async () => {} },
   }), error => error instanceof VideoModuleError && error.code === 'INVALID_PATH');
+});
+
+test('verifies source hashes before processing stored media', async t => {
+  const fixture = await setup(t);
+  const video = await fixture.service.ingest(ingestInput());
+  const sourcePath = path.join(fixture.directory, 'sources', TENANT_A, `${video.id}.source`);
+  const tampered = await readFile(sourcePath);
+  tampered[tampered.length - 1] ^= 0xff;
+  await writeFile(sourcePath, tampered, { mode: 0o600 });
+  await expectCode(fixture.service.frame({
+    ...auth(), videoId: video.id, atSeconds: 1,
+  }), 'CORRUPT_STORAGE');
+});
+
+test('cancellation during artifact persistence removes unpublished output', async t => {
+  const controller = new AbortController();
+  let clockCalls = 0;
+  const fixture = await setup(t, {
+    clock: () => {
+      clockCalls += 1;
+      if (clockCalls === 3) controller.abort();
+      return 1000;
+    },
+  });
+  const video = await fixture.service.ingest(ingestInput());
+  await expectCode(fixture.service.frame({
+    ...auth(), videoId: video.id, atSeconds: 1, signal: controller.signal,
+  }), 'INTERRUPTED');
+  assert.deepEqual(await readdir(path.join(fixture.directory, 'artifacts', TENANT_A)), []);
+  assert.deepEqual(await readdir(path.join(fixture.directory, 'temporary')), []);
 });

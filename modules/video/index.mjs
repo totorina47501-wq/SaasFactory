@@ -66,8 +66,9 @@ function validateLimits(value = {}) {
         key === 'maxWidth' || key === 'maxHeight' ? 8192 :
           key === 'maxConcurrentJobs' ? 8 :
             key === 'maxTenantFiles' || key === 'maxStorageFiles' ? 100_000 :
-              key === 'maxTenantBytes' || key === 'maxStorageBytes' || key === 'maxOutputBytes'
+              key === 'maxTenantBytes' || key === 'maxStorageBytes'
                 ? 10 * 1024 * 1024 * 1024 :
+                  key === 'maxOutputBytes' ? 64 * 1024 * 1024 :
                   key === 'jobTimeoutMs' ? 30 * 60 * 1000 : 365 * 24 * 60 * 60 * 1000;
     if (number > maximum) fail('INVALID_CONFIGURATION');
   }
@@ -209,6 +210,17 @@ function parseProbe(raw, limits) {
   });
 }
 
+function validateStoredProbe(probe, limits) {
+  safeMetadata(probe, ['mimeType', 'durationSeconds', 'width', 'height', 'videoCodec', 'audioAvailable']);
+  if (!['video/mp4', 'video/quicktime', 'video/x-matroska', 'video/webm'].includes(probe.mimeType) ||
+      typeof probe.durationSeconds !== 'number' || !Number.isFinite(probe.durationSeconds) ||
+      probe.durationSeconds <= 0 || probe.durationSeconds > limits.maxDurationSeconds ||
+      !Number.isSafeInteger(probe.width) || probe.width < 1 || probe.width > limits.maxWidth ||
+      !Number.isSafeInteger(probe.height) || probe.height < 1 || probe.height > limits.maxHeight ||
+      !['h264', 'hevc', 'vp9', 'av1', 'mpeg4'].includes(probe.videoCodec) ||
+      typeof probe.audioAvailable !== 'boolean') fail('CORRUPT_STORAGE');
+}
+
 function runEngine(executable, args, { timeoutMs, maxBytes, signal, outputTooLargeCode }) {
   if (signal?.aborted) return Promise.reject(new VideoModuleError('INTERRUPTED'));
   return new Promise((resolve, reject) => {
@@ -305,6 +317,10 @@ export async function createVideoService({
   const temporaryRoot = await ensureChild(directory, 'temporary');
   let activeJobs = 0;
   const activeByTenant = new Map();
+  const reservedTenantBytes = new Map();
+  const reservedTenantFiles = new Map();
+  let reservedStorageBytes = 0;
+  let reservedStorageFiles = 0;
 
   function now() {
     const value = clock();
@@ -366,7 +382,7 @@ export async function createVideoService({
     return { files, bytes };
   }
 
-  async function checkQuota(tenantId, addedBytes, addedFiles = 1) {
+  async function reserveQuota(tenantId, addedBytes, addedFiles = 1) {
     const totals = await usage();
     const dirs = await tenantDirectories(tenantId);
     let tenantFiles = 0;
@@ -380,10 +396,26 @@ export async function createVideoService({
         tenantBytes += info.size;
       }
     }
-    if (tenantFiles + addedFiles > limits.maxTenantFiles ||
-        tenantBytes + addedBytes > limits.maxTenantBytes) fail('QUOTA_EXCEEDED');
-    if (totals.files + addedFiles > limits.maxStorageFiles ||
-        totals.bytes + addedBytes > limits.maxStorageBytes) fail('STORAGE_LIMIT');
+    const tenantReservedBytes = reservedTenantBytes.get(tenantId) ?? 0;
+    const tenantReservedFiles = reservedTenantFiles.get(tenantId) ?? 0;
+    if (tenantFiles + tenantReservedFiles + addedFiles > limits.maxTenantFiles ||
+        tenantBytes + tenantReservedBytes + addedBytes > limits.maxTenantBytes) fail('QUOTA_EXCEEDED');
+    if (totals.files + reservedStorageFiles + addedFiles > limits.maxStorageFiles ||
+        totals.bytes + reservedStorageBytes + addedBytes > limits.maxStorageBytes) fail('STORAGE_LIMIT');
+    reservedTenantBytes.set(tenantId, tenantReservedBytes + addedBytes);
+    reservedTenantFiles.set(tenantId, tenantReservedFiles + addedFiles);
+    reservedStorageBytes += addedBytes;
+    reservedStorageFiles += addedFiles;
+    return () => {
+      const currentBytes = reservedTenantBytes.get(tenantId) - addedBytes;
+      const currentFiles = reservedTenantFiles.get(tenantId) - addedFiles;
+      if (currentBytes === 0) reservedTenantBytes.delete(tenantId);
+      else reservedTenantBytes.set(tenantId, currentBytes);
+      if (currentFiles === 0) reservedTenantFiles.delete(tenantId);
+      else reservedTenantFiles.set(tenantId, currentFiles);
+      reservedStorageBytes -= addedBytes;
+      reservedStorageFiles -= addedFiles;
+    };
   }
 
   async function withJob(tenantId, signal, work) {
@@ -419,8 +451,10 @@ export async function createVideoService({
     }
     if (metadata.contractVersion !== CONTRACT_VERSION || metadata.id !== videoId ||
         metadata.tenantId !== tenantId || !HASH.test(metadata.sourceHash) ||
-        !Number.isSafeInteger(metadata.sourceBytes) || !metadata.probe ||
+        !Number.isSafeInteger(metadata.sourceBytes) || metadata.sourceBytes < 16 ||
+        metadata.sourceBytes > limits.maxInputBytes ||
         !Number.isSafeInteger(metadata.expiresAt)) fail('CORRUPT_STORAGE');
+    validateStoredProbe(metadata.probe, limits);
     if (metadata.expiresAt <= now()) fail('NOT_FOUND');
     const sourceInfo = await lstat(sourcePath).catch(() => null);
     if (!sourceInfo?.isFile() || sourceInfo.isSymbolicLink() || sourceInfo.size !== metadata.sourceBytes) {
@@ -430,7 +464,8 @@ export async function createVideoService({
     return { metadata, sourcePath, dirs };
   }
 
-  async function storeArtifact(tenantId, videoId, kind, mimeType, extension, data) {
+  async function storeArtifact(tenantId, videoId, kind, mimeType, extension, data, signal) {
+    if (signal?.aborted) fail('INTERRUPTED');
     const artifactId = randomUUID();
     const dirs = await tenantDirectories(tenantId);
     const artifactPath = path.join(dirs.artifacts, `${artifactId}.${extension}`);
@@ -438,10 +473,13 @@ export async function createVideoService({
     const createdAt = now();
     const expiresAt = createdAt + limits.retentionMs;
     if (!Number.isSafeInteger(expiresAt)) fail('TIME_RANGE');
-    await checkQuota(tenantId, data.length);
+    const releaseQuota = await reserveQuota(tenantId, data.length);
     try {
+      if (signal?.aborted) fail('INTERRUPTED');
       await writeFile(temporaryPath, data, { flag: 'wx', mode: 0o600 });
+      if (signal?.aborted) fail('INTERRUPTED');
       await rename(temporaryPath, artifactPath);
+      if (signal?.aborted) fail('INTERRUPTED');
       const metadata = {
         contractVersion: CONTRACT_VERSION, id: artifactId, tenantId, videoId, kind, mimeType,
         sha256: sha256(data), size: data.length, createdAt, expiresAt,
@@ -449,6 +487,7 @@ export async function createVideoService({
       await writeFile(path.join(dirs.artifacts, `${artifactId}.json`), JSON.stringify(metadata), {
         flag: 'wx', mode: 0o600,
       });
+      if (signal?.aborted) fail('INTERRUPTED');
       return Object.freeze({
         id: artifactId, videoId, kind, contentType: mimeType, size: data.length,
         sha256: metadata.sha256, expiresAt,
@@ -459,6 +498,7 @@ export async function createVideoService({
       if (error instanceof VideoModuleError) throw error;
       fail('STORAGE_UNAVAILABLE');
     } finally {
+      releaseQuota();
       await unlink(temporaryPath).catch(() => {});
     }
   }
@@ -482,7 +522,7 @@ export async function createVideoService({
       if (kind === 'audio') {
         if (!metadata.probe.audioAvailable) fail('AUDIO_UNAVAILABLE');
         args = ['-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe',
-          '-i', sourcePath, '-map', '0:a:0', '-vn', '-threads', '1',
+          '-threads', '1', '-i', sourcePath, '-threads', '1', '-map', '0:a:0', '-vn',
           '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'wav', 'pipe:1'];
         mimeType = 'audio/wav';
         extension = 'wav';
@@ -496,7 +536,8 @@ export async function createVideoService({
           filters = `scale='min(${width},iw)':-2,format=rgb24`;
         }
         args = ['-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe',
-          '-i', sourcePath, '-ss', atSeconds.toFixed(3), '-threads', '1', '-filter_threads', '1',
+          '-threads', '1', '-filter_threads', '1', '-i', sourcePath, '-threads', '1',
+          '-ss', atSeconds.toFixed(3),
           '-frames:v', '1', '-vf', filters, '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1'];
         mimeType = 'image/png';
         extension = 'png';
@@ -507,13 +548,14 @@ export async function createVideoService({
         signal: input.signal,
         outputTooLargeCode: 'OUTPUT_TOO_LARGE',
       });
+      if (input.signal?.aborted) fail('INTERRUPTED');
       if (kind === 'audio') {
         if (data.length < 44 || data.toString('ascii', 0, 4) !== 'RIFF' ||
             data.toString('ascii', 8, 12) !== 'WAVE') fail('INVALID_ENGINE_OUTPUT');
       } else if (data.length < 8 || !data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
         fail('INVALID_ENGINE_OUTPUT');
       }
-      return storeArtifact(context.tenantId, videoId, kind, mimeType, extension, data);
+      return storeArtifact(context.tenantId, videoId, kind, mimeType, extension, data, input.signal);
     });
   }
 
@@ -523,13 +565,15 @@ export async function createVideoService({
         ['cookieHeader', 'tenantId', 'requestId', 'consent', 'video']);
       validSignal(input.signal);
       if (input.consent !== true) fail('CONSENT_REQUIRED');
-      if (!Buffer.isBuffer(input.video) && !(input.video instanceof Uint8Array)) fail('INVALID_INPUT');
+      if (!Buffer.isBuffer(input.video) &&
+          (!(input.video instanceof Uint8Array) || Object.getPrototypeOf(input.video) !== Uint8Array.prototype)) {
+        fail('INVALID_INPUT');
+      }
       if (input.video.byteLength < 16) fail('INVALID_MEDIA');
       if (input.video.byteLength > limits.maxInputBytes) fail('FILE_TOO_LARGE');
       const video = Buffer.from(input.video);
       const context = await authorize(input, 'video.ingest');
       return withJob(context.tenantId, input.signal, async () => {
-        await checkQuota(context.tenantId, video.length);
         const id = randomUUID();
         const dirs = await tenantDirectories(context.tenantId);
         const temporaryPath = path.join(temporaryRoot, `${randomUUID()}.input`);
@@ -537,6 +581,7 @@ export async function createVideoService({
         const createdAt = now();
         const expiresAt = createdAt + limits.retentionMs;
         if (!Number.isSafeInteger(expiresAt)) fail('TIME_RANGE');
+        const releaseQuota = await reserveQuota(context.tenantId, video.length);
         try {
           await writeFile(temporaryPath, video, { flag: 'wx', mode: 0o600 });
           const raw = await runEngine(ffprobePath, [
@@ -550,6 +595,7 @@ export async function createVideoService({
             outputTooLargeCode: 'INVALID_MEDIA',
           });
           const probe = parseProbe(raw.toString('utf8'), limits);
+          if (input.signal?.aborted) fail('INTERRUPTED');
           await rename(temporaryPath, sourcePath);
           const metadata = {
             contractVersion: CONTRACT_VERSION, id, tenantId: context.tenantId, probe,
@@ -568,6 +614,7 @@ export async function createVideoService({
           if (error instanceof VideoModuleError) throw error;
           fail('STORAGE_UNAVAILABLE');
         } finally {
+          releaseQuota();
           await unlink(temporaryPath).catch(() => {});
         }
       });
@@ -601,8 +648,9 @@ export async function createVideoService({
       if (metadata.contractVersion !== CONTRACT_VERSION || metadata.id !== artifactId ||
           metadata.tenantId !== context.tenantId || !HASH.test(metadata.sha256) ||
           !Number.isSafeInteger(metadata.size) || metadata.size < 1 ||
+          metadata.size > limits.maxOutputBytes ||
           !UUID.test(metadata.videoId) || !Number.isSafeInteger(metadata.createdAt) ||
-          !Number.isSafeInteger(metadata.expiresAt) ||
+          !Number.isSafeInteger(metadata.expiresAt) || metadata.expiresAt <= metadata.createdAt ||
           !['frame', 'thumbnail', 'audio'].includes(metadata.kind) ||
           metadata.mimeType !== (metadata.kind === 'audio' ? 'audio/wav' : 'image/png')) {
         fail('CORRUPT_STORAGE');
@@ -650,14 +698,19 @@ export async function createVideoService({
           safeMetadata(metadata, fields);
           if (metadata.contractVersion !== CONTRACT_VERSION || metadata.id !== id ||
               metadata.tenantId !== context.tenantId || !Number.isSafeInteger(metadata.createdAt) ||
-              !Number.isSafeInteger(metadata.expiresAt)) fail('CORRUPT_STORAGE');
-          if (type === 'source' && (!HASH.test(metadata.sourceHash) ||
-              !Number.isSafeInteger(metadata.sourceBytes) || !metadata.probe ||
-              !['video/mp4', 'video/quicktime', 'video/x-matroska', 'video/webm'].includes(metadata.probe.mimeType))) {
+              !Number.isSafeInteger(metadata.expiresAt) || metadata.expiresAt <= metadata.createdAt) {
             fail('CORRUPT_STORAGE');
           }
+          if (type === 'source' && (!HASH.test(metadata.sourceHash) ||
+              !Number.isSafeInteger(metadata.sourceBytes) || metadata.sourceBytes < 16 ||
+              metadata.sourceBytes > limits.maxInputBytes)) {
+            fail('CORRUPT_STORAGE');
+          }
+          if (type === 'source') validateStoredProbe(metadata.probe, limits);
           if (type === 'artifact' && (!UUID.test(metadata.videoId) || !HASH.test(metadata.sha256) ||
-              !Number.isSafeInteger(metadata.size) ||
+              !Number.isSafeInteger(metadata.size) || metadata.size < 1 ||
+              metadata.size > limits.maxOutputBytes ||
+              !['frame', 'thumbnail', 'audio'].includes(metadata.kind) ||
               metadata.mimeType !== (metadata.kind === 'audio' ? 'audio/wav' : 'image/png'))) {
             fail('CORRUPT_STORAGE');
           }
