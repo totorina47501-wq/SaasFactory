@@ -246,6 +246,31 @@ test('enforces queue and cross-instance worker limits', async t => {
   assert.equal((await fixture.service.get({ ...auth(), jobId: job.id })).status, 'succeeded');
 });
 
+test('serializes concurrent recovery of a stale filesystem lock', async t => {
+  const fixture = await setup({ limits: { maxWorkers: 2 } });
+  t.after(fixture.dispose);
+  const job = await fixture.service.enqueue(enqueueInput());
+  await writeFile(resolve(fixture.directory, 'jobs-v1.lock'), JSON.stringify({
+    pid: 2147483647,
+    token: randomUUID(),
+    createdAt: 0,
+  }), { mode: 0o600 });
+  const secondWorker = fixture.createService();
+  let executions = 0;
+  const release = [];
+  const handler = () => {
+    executions += 1;
+    return new Promise(resolveWork => release.push(resolveWork));
+  };
+  const firstWork = fixture.service.runOnce({ handlers: { 'report.generate': handler } });
+  const secondWork = secondWorker.runOnce({ handlers: { 'report.generate': handler } });
+  await new Promise(resolveWait => setTimeout(resolveWait, 50));
+  assert.equal(executions, 1);
+  for (const resolveWork of release) resolveWork();
+  await Promise.all([firstWork, secondWork]);
+  assert.equal((await fixture.service.get({ ...auth(), jobId: job.id })).status, 'succeeded');
+});
+
 test('signals timeouts and reports that CPU and memory budgets are advisory', async t => {
   const fixture = await setup({ limits: { maxTimeoutMs: 100, leaseMs: 100 } });
   t.after(fixture.dispose);
@@ -273,4 +298,19 @@ test('signals timeouts and reports that CPU and memory budgets are advisory', as
     .some(event => event.type === 'job.resource-budget-exceeded'));
   assert.equal(jobsContract.limitEnforcement.cpuBudgetMs, 'process-wide-advisory');
   assert.equal(jobsContract.limitEnforcement.operatingSystemQuotaDetected, false);
+});
+
+test('rejects unsafe runtime bounds and prevents timestamp overflow', async t => {
+  const fixture = await setup({
+    clock: () => Number.MAX_SAFE_INTEGER - 1,
+    limits: { leaseMs: 100 },
+  });
+  t.after(fixture.dispose);
+  const job = await fixture.service.enqueue(enqueueInput());
+  await expectCode(fixture.service.runOnce({ handlers: { 'report.generate': async () => {} } }),
+    'TIME_RANGE');
+  assert.equal((await fixture.service.get({ ...auth(), jobId: job.id })).status, 'queued');
+
+  assert.throws(() => fixture.createService({ limits: { leaseMs: Number.MAX_SAFE_INTEGER } }),
+    error => error instanceof JobsModuleError && error.code === 'INVALID_CONFIGURATION');
 });

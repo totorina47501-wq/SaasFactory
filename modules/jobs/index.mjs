@@ -49,6 +49,12 @@ export class JobsModuleError extends Error {
   }
 }
 
+function addTime(now, delayMs) {
+  const result = now + delayMs;
+  if (!Number.isSafeInteger(result)) fail('TIME_RANGE');
+  return result;
+}
+
 function fail(code) {
   throw new JobsModuleError(code);
 }
@@ -162,9 +168,14 @@ function validateConfiguration(configuration) {
     }
   }
   if (limits.retryMaxMs < limits.retryBaseMs ||
+      limits.retryMaxMs > 24 * 60 * 60 * 1000 ||
+      limits.leaseMs < 100 || limits.leaseMs > 24 * 60 * 60 * 1000 ||
+      limits.lockWaitMs > 60000 ||
+      limits.staleLockMs > 24 * 60 * 60 * 1000 ||
       limits.maxTimeoutMs > 24 * 60 * 60 * 1000 ||
       limits.maxPayloadBytes > 1024 * 1024 ||
       limits.maxQueueSize > 100000 ||
+      limits.maxEvents > 100000 ||
       limits.maxStorageBytes > 1024 * 1024 * 1024 ||
       limits.maxWorkers > 128 ||
       limits.maxAttempts > 20) fail('INVALID_CONFIGURATION');
@@ -201,34 +212,50 @@ async function ensurePrivateDirectory(directory) {
       (info.mode & 0o077) !== 0) fail('UNSAFE_STORAGE_DIRECTORY');
 }
 
-async function readLock(lockPath, staleLockMs) {
+async function inspectLock(lockPath, staleLockMs) {
   try {
     const info = await lstat(lockPath);
-    if (!info.isFile() || info.isSymbolicLink()) fail('UNSAFE_STORAGE');
+    if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0) {
+      fail('UNSAFE_STORAGE');
+    }
     let owner;
     try {
       owner = JSON.parse(await readFile(lockPath, 'utf8'));
     } catch {
-      if (Date.now() - info.mtimeMs > staleLockMs) return 'stale';
-      return 'active';
+      return {
+        status: Date.now() - info.mtimeMs > staleLockMs ? 'stale' : 'active',
+        dev: info.dev,
+        ino: info.ino,
+      };
     }
-    if (!Number.isSafeInteger(owner.pid) || typeof owner.token !== 'string') {
-      return Date.now() - info.mtimeMs > staleLockMs ? 'stale' : 'active';
+    if (!plainRecord(owner) || !Number.isSafeInteger(owner.pid) || owner.pid < 1 ||
+        typeof owner.token !== 'string' || !UUID_PATTERN.test(owner.token)) {
+      return {
+        status: Date.now() - info.mtimeMs > staleLockMs ? 'stale' : 'active',
+        dev: info.dev,
+        ino: info.ino,
+        token: owner.token,
+      };
     }
     try {
       process.kill(owner.pid, 0);
-      return 'active';
+      return { status: 'active', dev: info.dev, ino: info.ino, token: owner.token };
     } catch (error) {
-      if (error?.code === 'EPERM') return 'active';
-      return 'stale';
+      return {
+        status: error?.code === 'EPERM' ? 'active' : 'stale',
+        dev: info.dev,
+        ino: info.ino,
+        token: owner.token,
+      };
     }
   } catch (error) {
-    if (error?.code === 'ENOENT') return 'absent';
+    if (error?.code === 'ENOENT') return { status: 'absent' };
     throw error;
   }
 }
 
 async function acquireLock(lockPath, limits) {
+  const reaperPath = `${lockPath}.reaper`;
   const token = randomUUID();
   const started = Date.now();
   while (Date.now() - started <= limits.lockWaitMs) {
@@ -237,6 +264,15 @@ async function acquireLock(lockPath, limits) {
       handle = await open(lockPath, 'wx', 0o600);
       await handle.writeFile(JSON.stringify({ pid: process.pid, token, createdAt: Date.now() }));
       await handle.sync();
+      const reaper = await inspectLock(reaperPath, limits.staleLockMs);
+      if (reaper.status !== 'absent') {
+        await handle.close();
+        await unlink(lockPath).catch(() => {});
+        handle = undefined;
+        if (reaper.status === 'stale') fail('LOCK_RECOVERY_REQUIRED');
+        await delay(10);
+        continue;
+      }
       return {
         async release() {
           try {
@@ -254,13 +290,36 @@ async function acquireLock(lockPath, limits) {
         await handle.close().catch(() => {});
         await unlink(lockPath).catch(() => {});
       }
+      if (error instanceof JobsModuleError) throw error;
       if (error?.code !== 'EEXIST') fail('STORAGE_UNAVAILABLE');
-      const status = await readLock(lockPath, limits.staleLockMs).catch(() => 'active');
-      if (status === 'stale') {
+      const stale = await inspectLock(lockPath, limits.staleLockMs).catch(() => ({ status: 'active' }));
+      if (stale.status === 'stale') {
+        let reaperHandle;
         try {
-          await unlink(lockPath);
-        } catch (unlinkError) {
-          if (unlinkError?.code !== 'ENOENT') fail('STORAGE_UNAVAILABLE');
+          reaperHandle = await open(reaperPath, 'wx', 0o600);
+          const reaperToken = randomUUID();
+          await reaperHandle.writeFile(JSON.stringify({
+            pid: process.pid,
+            token: reaperToken,
+            createdAt: Date.now(),
+          }));
+          await reaperHandle.sync();
+          const current = await inspectLock(lockPath, limits.staleLockMs);
+          if (current.status === 'stale' && current.dev === stale.dev &&
+              current.ino === stale.ino && current.token === stale.token) {
+            await unlink(lockPath);
+          }
+          const owner = JSON.parse(await readFile(reaperPath, 'utf8'));
+          if (owner.token === reaperToken) await unlink(reaperPath);
+        } catch (reaperError) {
+          if (reaperHandle) await unlink(reaperPath).catch(() => {});
+          if (reaperError?.code !== 'EEXIST') fail('STORAGE_UNAVAILABLE');
+          const reaper = await inspectLock(reaperPath, limits.staleLockMs)
+            .catch(() => ({ status: 'active' }));
+          if (reaper.status === 'stale') fail('LOCK_RECOVERY_REQUIRED');
+          await delay(10);
+        } finally {
+          await reaperHandle?.close().catch(() => {});
         }
       } else {
         await delay(10);
@@ -280,6 +339,7 @@ function validateState(state, limits) {
       state.events.length > limits.maxEvents) {
     fail('CORRUPT_QUEUE');
   }
+  const idempotencyKeys = new Set();
   for (const [id, job] of Object.entries(state.jobs)) {
     if (!plainRecord(job) || Object.keys(job).sort().join(',') !== [...JOB_FIELDS].sort().join(',') ||
         id !== job.id || !UUID_PATTERN.test(id) || typeof job.tenantId !== 'string' ||
@@ -313,6 +373,9 @@ function validateState(state, limits) {
            !Number.isSafeInteger(job.resourceUsage.processCpuMs) ||
            !Number.isSafeInteger(job.resourceUsage.processRssBytes) ||
            typeof job.resourceUsage.measurement !== 'string'))) fail('CORRUPT_QUEUE');
+    const key = `${job.tenantId}:${job.idempotencyKey}`;
+    if (idempotencyKeys.has(key)) fail('CORRUPT_QUEUE');
+    idempotencyKeys.add(key);
     let payloadText;
     try {
       payloadText = serializePayload(job.payload, limits.maxPayloadBytes);
@@ -435,7 +498,10 @@ export function createJobsService(configuration) {
     } catch {
       fail('TENANT_ACCESS_DENIED');
     }
-    return validateTenantContext(result);
+    const context = validateTenantContext(result);
+    if (context.tenantId !== input.tenantId.toLowerCase() ||
+        context.requestId !== input.requestId) fail('INVALID_TENANT_CONTEXT');
+    return context;
   }
 
   async function update(operation) {
@@ -527,7 +593,7 @@ export function createJobsService(configuration) {
       const token = randomUUID();
       job.status = 'running';
       job.attempt += 1;
-      job.lease = { token, expiresAt: now + limits.leaseMs };
+      job.lease = { token, expiresAt: addTime(now, limits.leaseMs) };
       job.errorCode = null;
       record(state, job, 'job.started', now, emit);
       return { id: job.id, leaseToken: token, type: job.type, tenantId: job.tenantId,
@@ -544,7 +610,7 @@ export function createJobsService(configuration) {
       if (!job || job.status !== 'running' || job.lease?.token !== token) return null;
       const now = validateNow(clock);
       if (job.cancelRequestedAt !== null) return { cancel: true };
-      job.lease.expiresAt = now + limits.leaseMs;
+      job.lease.expiresAt = addTime(now, limits.leaseMs);
       job.updatedAt = now;
       return { cancel: false };
     });
@@ -567,7 +633,7 @@ export function createJobsService(configuration) {
         if (job.attempt < job.maxAttempts) {
           const backoff = Math.min(limits.retryMaxMs, limits.retryBaseMs * (2 ** (job.attempt - 1)));
           job.status = 'queued';
-          job.availableAt = now + backoff;
+          job.availableAt = addTime(now, backoff);
           job.errorCode = errorCode;
           record(state, job, 'job.retrying', now, emit);
         } else {

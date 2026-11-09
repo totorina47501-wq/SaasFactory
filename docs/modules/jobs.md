@@ -87,17 +87,20 @@ Les erreurs publiques ont un `code` stable sur `JobsModuleError` :
 `TENANT_ACCESS_DENIED`, `NOT_FOUND`, `INVALID_PAYLOAD`, `PAYLOAD_TOO_LARGE`,
 `IDEMPOTENCY_CONFLICT`, `QUEUE_FULL`, `QUEUE_BUSY`, `CORRUPT_QUEUE`,
 `UNSAFE_STORAGE`, `UNSAFE_STORAGE_DIRECTORY`, `STORAGE_LIMIT`,
-`STORAGE_UNAVAILABLE`, `JOB_TIMEOUT` et `JOB_FAILED`.
+`STORAGE_UNAVAILABLE`, `LOCK_RECOVERY_REQUIRED`, `TIME_RANGE`, `JOB_TIMEOUT`
+et `JOB_FAILED`. `HANDLER_UNAVAILABLE` et `LEASE_EXPIRED` sont des codes
+d'erreur persistés sur les jobs.
 
 ## Bornes, reprise et garanties
 
 Les limites configurables ont des valeurs bornées par défaut : 1 000 jobs
 actifs, 2 workers, 3 tentatives, payload de 64 KiB, 1 000 événements conservés
-et 64 MiB de stockage JSON. Toute limite atteinte refuse la nouvelle opération
-sans écraser l'état. Les jobs terminaux et leurs clés idempotentes restent
-persistés ; l'atteinte de la limite disque requiert une sauvegarde puis une
-purge opérateur explicite du répertoire, ce qui réinitialise aussi l'historique
-d'idempotence.
+et 64 MiB de stockage JSON. Les leases et délais de retry sont plafonnés à un
+jour, et le timeout par défaut à cinq minutes. Toute limite atteinte refuse la
+nouvelle opération sans écraser l'état. Les jobs terminaux et leurs clés
+idempotentes restent persistés ; l'atteinte de la limite disque requiert une
+sauvegarde puis une purge opérateur explicite du répertoire, ce qui réinitialise
+aussi l'historique d'idempotence.
 
 Une réclamation crée un lease à jeton aléatoire et un heartbeat prolonge le
 lease durant un handler asynchrone. Après crash, un autre worker réactive un job
@@ -109,6 +112,13 @@ mais ne peut pas annuler un effet externe déjà parti. L'annulation et le timeo
 envoient un signal coopératif ; le handler doit le surveiller et s'arrêter
 proprement. Un handler synchrone bloquant ou qui ignore le signal ne peut pas
 être arrêté de façon portable par ce module.
+
+La récupération des leases est indépendante du verrou de transaction local. Si
+un processus s'arrête pendant l'étroite section de récupération d'un verrou
+stale, le verrou `.reaper` est laissé intact et les appels échouent
+`LOCK_RECOVERY_REQUIRED` plutôt que de risquer deux propriétaires. Arrêter les
+workers, vérifier que le processus propriétaire n'existe plus, puis supprimer
+manuellement uniquement le fichier `.reaper` abandonné avant de reprendre.
 
 `maxWorkers`, la taille de file, la taille du payload et la taille du stockage
 sont des contrôles effectifs entre processus locaux utilisant ce même
