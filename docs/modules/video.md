@@ -59,9 +59,10 @@ Les autres méthodes sont `frame({…, videoId, atSeconds, signal?})`,
 `extractAudio({…, videoId, signal?})`, `readArtifact({…, artifactId})` et
 `purgeExpired({cookieHeader, tenantId, requestId})`. `thumbnail` accepte aussi
 `width` (16–1024 pixels, valeur par défaut 320). `frame` et `thumbnail`
-renvoient un identifiant d'artefact, son type MIME, sa taille, son SHA-256 et
-son expiration ; `readArtifact` revalide l'autorisation, la taille et le hash
-avant de retourner les octets. Les chemins locaux ne sont jamais retournés.
+ainsi que `extractAudio` renvoient un identifiant d'artefact, son type MIME, sa
+taille, son SHA-256 et son expiration ; `readArtifact` revalide l'autorisation,
+la taille et le hash avant de retourner les octets. Les chemins locaux ne sont
+jamais retournés.
 
 ## Validation et moteur
 
