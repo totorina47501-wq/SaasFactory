@@ -86,23 +86,29 @@ test('recovery requires exactly one valid specialist role', async () => {
 });
 
 test('workflow is failure-only, guarded, and checks out only trusted main with read-only contents', () => {
-  assert.match(WORKFLOW, /@copilot comment trigger is unverified/);
-  // Paid AI recovery remains deliberately disabled while deterministic CI is restored.
-  assert.match(WORKFLOW, /workflow_dispatch:/);
-  assert.doesNotMatch(WORKFLOW, /^\\s+workflow_run:/m);
+  // Recovery is enabled only for authenticated Copilot PR CI failures.
+  assert.match(WORKFLOW, /^  workflow_run:/m);
+  assert.match(WORKFLOW, /workflows: \['SaaS Factory CI'\]/);
+  assert.match(WORKFLOW, /types: \[completed\]/);
+  assert.match(WORKFLOW, /- 'copilot\/\*\*'/);
+  assert.match(WORKFLOW, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(WORKFLOW, /github\.event\.workflow_run\.event == 'pull_request'/);
+  assert.match(WORKFLOW, /github\.event\.workflow_run\.head_repository\.full_name == github\.repository/);
+  assert.match(WORKFLOW, /secrets\.COPILOT_DISPATCH_TOKEN/);
+  assert.match(WORKFLOW, /persist-credentials: false/);
   assert.match(WORKFLOW, /github\.repository == 'totorina47501-wq\/SaasFactory'/);
   assert.match(WORKFLOW, /github\.event\.workflow_run\.conclusion == 'failure'/);
-  assert.match(WORKFLOW, /vars\.SAAS_FACTORY_CI_RECOVERY_ENABLED == 'true'/);
-  assert.match(WORKFLOW, /issues: write/);
+  assert.doesNotMatch(WORKFLOW, /vars\.SAAS_FACTORY_CI_RECOVERY_ENABLED/);
+  assert.match(WORKFLOW, /issues: read/);
   assert.match(WORKFLOW, /pull-requests: read/);
   assert.match(WORKFLOW, /actions: read/);
   assert.match(WORKFLOW, /contents: read/);
   assert.match(WORKFLOW, /concurrency:\s*\n\s+group: saas-factory-ci-recovery-\$\{\{ github\.event\.workflow_run\.pull_requests\[0\]\.number \|\| 'unassociated' \}\}/);
   const checkout = WORKFLOW.slice(WORKFLOW.indexOf('uses: actions/checkout@v4'), WORKFLOW.indexOf('uses: actions/github-script@v7'));
-  assert.match(checkout, /ref: main/);
+  assert.match(checkout, /ref: \$\{\{ github\.sha \}\}/);
   assert.match(checkout, /persist-credentials: false/);
   assert.doesNotMatch(checkout, /workflow_run\.head_sha|pull_request\.head\.sha/);
-  assert.doesNotMatch(WORKFLOW, /pull_request:|pull_request_target:/);
+  assert.doesNotMatch(WORKFLOW, /^  pull_request(?:_target)?:/m);
 });
 
 function fixture(options = {}) {
@@ -137,6 +143,7 @@ function fixture(options = {}) {
   };
   const github = {
     rest: {
+      users: {getAuthenticated: async () => ({data:{login:options.invalidCommenter ? 'other-user' : 'totorina47501-wq'}})},
       actions: {
         getWorkflowRun: async () => {
           if (options.failAt === 'run') throw new Error('untrusted API detail');
@@ -320,3 +327,29 @@ test('fails closed on GitHub API errors without exposing API details or writing 
   }
 });
 
+
+
+test('the bounded recovery requester must be a repository-authorized user', async () => {
+  const state = fixture({invalidCommenter:true});
+  const previous=process.env.EXPECTED_REPO; process.env.EXPECTED_REPO=REPO;
+  try {
+    await assert.rejects(recover({...state,core:{summary:state.summary}}),/failed closed/);
+  } finally {
+    if(previous===undefined)delete process.env.EXPECTED_REPO;
+    else process.env.EXPECTED_REPO=previous;
+  }
+  assert.equal(state.created.length,0);
+});
+test('repair cannot loop indefinitely across new PR head commits', async () => {
+  const comments=[];
+  const shas=['a','b','c','d','e'].map(char=>char.repeat(40));
+  for(let i=0;i<4;i++) {
+    const result=await exercise({comments,runId:i+1,sha:shas[i]});
+    assert.equal(result.report.decision,'requested:attempt-1');
+  }
+  const blocked=await exercise({comments,runId:5,sha:shas[4]});
+  assert.equal(blocked.report.decision,'blocked:global-attempt-limit-reached');
+  assert.equal(blocked.created.length,0);
+  assert.equal(blocked.failures.length,1);
+  assert.equal(comments.length,4);
+});
