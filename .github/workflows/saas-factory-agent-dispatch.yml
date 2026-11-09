@@ -1,7 +1,10 @@
 name: SaaS Factory agent dispatch
-# PAUSED 2026-11-08: automated triggers removed to prevent further AI credits.
+# Re-enabled for the explicitly authorized Growth Engine delivery.
+# Keep dispatch bounded by the existing coordinator, capacity, and approvals.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '*/30 * * * *'
 permissions:
   contents: read
   issues: read
