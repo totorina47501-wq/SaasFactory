@@ -151,18 +151,25 @@ test('privileged dispatcher only runs trusted scheduled or manual events',()=>{
  assert.equal(check('refs/heads/main','other/repo'),false);
 });
 
-test('green main CI wakes dispatcher without exposing write permissions to PR code',()=>{
- const ci=fs.readFileSync(require('node:path').join(__dirname,'../.github/workflows/ci.yml'),'utf8');
- assert.match(ci,/^  wake-orchestrator:\s*$/m);
- const block=ci.slice(ci.indexOf('  wake-orchestrator:'));
- assert.match(block,/github\.event_name == 'push'/);
- assert.match(block,/github\.ref == 'refs\/heads\/main'/);
- assert.match(block,/needs: \[generator, generated-app\]/);
- assert.match(block,/permissions:\s*\n\s+actions: write\s*\n\s+contents: read/);
- assert.match(block,/actions\.createWorkflowDispatch/);
- assert.match(block,/workflow_id: 'saas-factory-agent-dispatch\.yml'/);
- assert.match(block,/ref: 'main'/);
- assert.doesNotMatch(ci.slice(0,ci.indexOf('jobs:')),/actions: write/);
- const review=ci.slice(ci.indexOf('  free-review:'),ci.indexOf('  generator:'));
- assert.doesNotMatch(review,/actions: write|COPILOT_DISPATCH_TOKEN/);
+test('trusted post-main wake dispatches only after the exact green main push CI',()=>{
+ const path=require('node:path');
+ const wake=fs.readFileSync(path.join(__dirname,'../.github/workflows/saas-factory-post-main-ci-wake.yml'),'utf8');
+ const ci=fs.readFileSync(path.join(__dirname,'../.github/workflows/ci.yml'),'utf8');
+ assert.match(wake,/^  workflow_run:/m);
+ assert.match(wake,/workflows: \['SaaS Factory CI'\]/);
+ assert.match(wake,/types: \[completed\]/);
+ assert.match(wake,/branches: \[main\]/);
+ assert.match(wake,/github\.event\.workflow_run\.event == 'push'/);
+ assert.match(wake,/github\.event\.workflow_run\.conclusion == 'success'/);
+ assert.match(wake,/github\.event\.workflow_run\.head_sha == github\.sha/);
+ assert.match(wake,/workflow\.data\.path !== '\.github\/workflows\/ci\.yml'/);
+ assert.match(wake,/main\.data\.commit\?\.sha !== source\.head_sha/);
+ assert.match(wake,/github\.rest\.actions\.createWorkflowDispatch/);
+ assert.match(wake,/workflow_id:'saas-factory-agent-dispatch\.yml'/);
+ assert.match(wake,/^permissions:\s*\n  actions: write\n  contents: read/m);
+ assert.doesNotMatch(wake,/actions\/checkout|COPILOT_DISPATCH_TOKEN/);
+ assert.doesNotMatch(ci,/actions: write|COPILOT_DISPATCH_TOKEN/);
+ const dispatch=fs.readFileSync(path.join(__dirname,'../.github/workflows/saas-factory-agent-dispatch.yml'),'utf8');
+ assert.match(dispatch,/cron: '\*\/10 \* \* \* \*'/);
+ assert.doesNotMatch(dispatch,/^  workflow_run:/m);
 });
