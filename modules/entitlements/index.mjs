@@ -63,10 +63,6 @@ function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
 }
 
-function safeOverride(value) {
-  return value === null ? null : Object.freeze({ kind: value.kind, value: value.value });
-}
-
 export function createMemoryEntitlementsStore() {
   const usage = new Map();
   const reservations = new Map();
