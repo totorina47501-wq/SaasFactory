@@ -72,12 +72,12 @@ test('GitHub closing references are authoritative for hidden or additional missi
   }
 });
 
-test('newer review IDs break equal-timestamp verdict ties',async()=>{
+test('newer CHANGES_REQUESTED review IDs break equal-timestamp verdict ties',async()=>{
   const state=mergeMocks(), paginate=state.github.paginate;
   state.github.paginate=async(method,args)=>{
     const values=await paginate(method,args);
     if(method!==state.github.rest.pulls.listReviews)return values;
-    return [...values,{...values[0],id:9,body:'Changes recommended'}];
+    return [...values,{...values[0],id:9,state:'CHANGES_REQUESTED'}];
   };
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(state)),false);
 });
@@ -89,7 +89,7 @@ test('visible closure links survive fenced HTML markers and ordinary prose is ig
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(prose)),true);
 });
 
-test('a clean authenticated Copilot verdict without a file table can authorize a scoped change',async()=>{
+test('a paid Copilot verdict is not required when the trusted free-review job succeeds',async()=>{
   const clean=mergeMocks({reviewBody:'<!-- ccr-overview-v2 -->\n### 🟢 Approval recommended\n\n**No open issues** 🎉'});
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(clean)),true);
 });
@@ -116,9 +116,9 @@ test('effective final approval supersedes an older request by the same reviewer'
   assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(state)),true);
 });
 
-test('an explicit inability to review never becomes a positive attestation',async()=>{
+test('an inability to provide a paid review does not replace the free-review job',async()=>{
   const invalid=mergeMocks({reviewBody:"<!-- ccr-overview-v2 -->\n### 🟢 Approval recommended\nNo open issues\nCopilot wasn't able to review any files"});
-  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(invalid)),false);
+  assert.equal(await orchestration.mergeEligiblePullRequest(mergeArgs(invalid)),true);
 });
 
 test('optional owner notifications do not impose a human review on authorized automation',async()=>{
@@ -622,7 +622,7 @@ test('existing work with missing issue dependency metadata is reported as held',
   assert.deepEqual(report.blockers, [`existing-work-metadata:#${existing.issue}/PR#${existing.pullRequest}`]);
 });
 
-test('list summaries are detailed before a real-format COMMENTED review can authorize merge', async () => {
+test('list summaries are detailed before a trusted free-review job can authorize merge', async () => {
   const task = coordinatorTask();
   const workIssue = issue(task);
   const listSummary = {number: 45, body: 'Closes #17'};
@@ -638,27 +638,13 @@ test('list summaries are detailed before a real-format COMMENTED review can auth
     head: {ref: 'copilot/task-17', sha: headSha, repo: {full_name: orchestration.REPOSITORY}},
     user: {login: 'Copilot'}
   };
-  const review = {
-    id: 8,
-    state: 'COMMENTED',
-    user: {login: 'copilot-pull-request-reviewer[bot]'},
-    commit_id: headSha,
-    submitted_at: '2026-11-06T09:00:00Z',
-    body: `### ✅ Approval recommended
-
-**No open issues** 🎉
-
-| File | Description |
-| --- | --- |
-| \`${task.files[0]}\` | Reviewed on this commit. |`
-  };
   const result = orchestrationGithub({
     issues: [workIssue],
     openPrs: [listSummary],
     allPrs: [listSummary],
     detailedPrs: {45: detail},
     pullFiles: {45: [{filename: task.files[0]}]},
-    reviews: [review],
+    reviews: [],
     reviewComments: [],
     requestedReviewers: {users: [], teams: []}
   });
@@ -671,7 +657,7 @@ test('list summaries are detailed before a real-format COMMENTED review can auth
 function mergeMocks({head = headSha, base = mainSha, state = 'clean', ciWorkflowId = 12,
   review = true, reviewBody, reviewHead = head, unresolved = false, changesRequested = false,
   pendingReviewRequest = false, lateReviewRequest = false, lateChangesRequested = false, changedFiles,
-  reportedChangedFiles, workflowRuns, lateWorkflowRuns, finalIssue, finalIssueAfterFirstRead,
+  reportedChangedFiles, workflowRuns, lateWorkflowRuns, freeReviewJobs, finalIssue, finalIssueAfterFirstRead,
   finalBase = mainSha, author = 'copilot-swe-agent[bot]', finalMain = mainSha,
   finalMainAfterFirstRead, finalState = 'open', reviewUser = 'copilot-pull-request-reviewer[bot]',
   branch = 'copilot/task-17', prBody = 'Closes #17', actualClosingIssues = [17]} = {}) {
@@ -708,9 +694,10 @@ ${fileList.map(file => `| \`${file}\` | Reviewed on this commit. |`).join('\n')}
   };
   const linkedIssue = issue(task);
   const github = {
-    paginate: async (method) => {
+    paginate: async (method, args) => {
       if (method === github.rest.pulls.listFiles) return fileEntries;
-      if (method === github.rest.actions.listJobsForWorkflowRun) return [{name:'Free deterministic PR review',status:'completed',conclusion:'success',run_id:args.run_id,head_sha:head}];
+      if (method === github.rest.actions.listJobsForWorkflowRun) return freeReviewJobs ??
+        [{name:'Free deterministic PR review',status:'completed',conclusion:'success',run_id:args.run_id,head_sha:head}];
       if (method === github.rest.actions.listWorkflowRuns) {
         ciCalls++;
         if (ciCalls > 1 && lateWorkflowRuns) return ciContext(lateWorkflowRuns);
@@ -781,7 +768,7 @@ function mergeArgs(value) {
   };
 }
 
-test('merge requires authenticated CI and final review of changed files on the current head', async () => {
+test('merge requires authenticated CI and a successful free-review job on the current head', async () => {
   const valid = mergeMocks();
   assert.equal(await orchestration.mergeEligiblePullRequest({
     ...mergeArgs(valid)
@@ -793,11 +780,11 @@ test('merge requires authenticated CI and final review of changed files on the c
     {base: 'c'.repeat(40)},
     {state: 'dirty'},
     {ciWorkflowId: 99},
-    {review: false},
-    {reviewUser: 'someone-else[bot]'},
-    {reviewBody: 'Approval recommended\n\nNo open issues'},
-    {reviewBody: `Approval recommended\n\nNo open issues\n\n| File | Description |\n| --- | --- |\n| \`README.md\` | Not the changed file. |`},
-    {reviewHead: 'd'.repeat(40)},
+    {freeReviewJobs: []},
+    {freeReviewJobs: [{name: 'Free deterministic PR review', status: 'completed',
+      conclusion: 'success', run_id: 999, head_sha: headSha}]},
+    {freeReviewJobs: [{name: 'Free deterministic PR review', status: 'completed',
+      conclusion: 'success', run_id: 100, head_sha: 'd'.repeat(40)}]},
     {unresolved: true},
     {changesRequested: true},
     {pendingReviewRequest: true},
