@@ -2,7 +2,9 @@
 
 const RECOVERY_MARKER = '<!-- saas-factory-ci-recovery:';
 const COPILOT_LOGINS = new Set(['copilot', 'copilot-swe-agent[bot]']);
-const BOT_LOGIN = 'github-actions[bot]';
+const TRUSTED_COMMENTERS = new Set(['github-actions[bot]', 'totorina47501-wq']);
+const AUTHORIZED_COMMENTER = 'totorina47501-wq';
+const MAX_TOTAL_ATTEMPTS_PER_PR = 4;
 const APPROVAL_LABEL = 'agent:approved';
 const MAX_ATTEMPTS = 2;
 const MAX_COMMENT_PAGES = 10;
@@ -53,13 +55,15 @@ function parseMarker(body) {
 
 function recoveryLedger(comments, pr, sha) {
   const entries = [];
+  const allEntries = [];
   for (const comment of comments) {
     if (!comment || typeof comment.user?.login !== 'string' || !comment.user.login || typeof comment.body !== 'string') {
       throw new Error('Unverifiable recovery comment');
     }
-    if (comment.user?.login !== BOT_LOGIN || !comment.body?.includes(RECOVERY_MARKER)) continue;
+    if (!TRUSTED_COMMENTERS.has(comment.user.login) || !comment.body?.includes(RECOVERY_MARKER)) continue;
     const marker = parseMarker(comment.body);
     if (marker.pr !== pr) throw new Error('Recovery marker references a different PR');
+    allEntries.push(marker);
     if (marker.sha === sha.toLowerCase()) entries.push(marker);
   }
   const runs = new Set();
@@ -74,7 +78,9 @@ function recoveryLedger(comments, pr, sha) {
   if (entries.some((entry) => entry.status === 'blocked' && (entry.attempt !== MAX_ATTEMPTS || retries.length !== MAX_ATTEMPTS))) {
     throw new Error('Invalid blocked recovery ledger entry');
   }
-  return {entries, retries};
+  const allRetries = allEntries.filter(entry => entry.status === 'retry');
+  if (allRetries.length > MAX_TOTAL_ATTEMPTS_PER_PR) throw new Error('Global CI correction quota exceeded');
+  return {entries, retries, allRetries};
 }
 
 async function loadRecoveryComments(github, owner, repo, pr) {
@@ -105,8 +111,9 @@ module.exports = async ({github, context, core}) => {
   const report = {decision: 'ignored'};
   const finish = async () => {
     await writeSummary(core, report);
-    if (report.decision === 'blocked:attempt-limit-reached') {
-      core.setFailed('CI recovery blocked: the two-request quota for this PR/SHA is exhausted');
+    if (report.decision === 'blocked:attempt-limit-reached' ||
+        report.decision === 'blocked:global-attempt-limit-reached') {
+      core.setFailed('CI recovery blocked: correction quota exhausted; no further AI requests will be sent');
     }
     return report;
   };
@@ -152,10 +159,14 @@ module.exports = async ({github, context, core}) => {
     if (!approvedIssue(issueResult.data)) return await finish();
 
     const comments = await loadRecoveryComments(github, owner, repo, prNumber);
-    const {entries, retries} = recoveryLedger(comments, prNumber, report.sha);
+    const {entries, retries, allRetries} = recoveryLedger(comments, prNumber, report.sha);
     const runId = Number(run.id);
     if (!Number.isSafeInteger(runId) || runId < 1) throw new Error('Invalid workflow run ID');
     report.runId = runId;
+    if (allRetries.length >= MAX_TOTAL_ATTEMPTS_PER_PR) {
+      report.decision = 'blocked:global-attempt-limit-reached';
+      return await finish();
+    }
     if (entries.some((entry) => entry.status === 'blocked')) {
       report.decision = 'blocked:attempt-limit-reached';
       return await finish();
@@ -192,6 +203,12 @@ module.exports = async ({github, context, core}) => {
         latestLink !== linkedIssue || !approvedIssue(latestIssue)) {
       report.decision = 'ignored:eligibility-changed';
       return await finish();
+    }
+    // Mentions only trigger Copilot from a user with write permission,
+    // not an automated GITHUB_TOKEN account. Verify the PAT user now.
+    const identity = await github.rest.users.getAuthenticated();
+    if (identity.data?.login !== AUTHORIZED_COMMENTER) {
+      throw new Error('Copilot recovery requester is not the authorized repository owner');
     }
     await github.rest.issues.createComment({
       owner,
