@@ -8,7 +8,7 @@ import {
   MfaModuleError,
   mfaContract,
 } from '../modules/mfa/index.mjs';
-import { createPostgresMfaStore } from '../modules/mfa/postgres-store.mjs';
+import { createPostgresMfaStore, runMfaMigrations } from '../modules/mfa/postgres-store.mjs';
 
 const userId = 'c41b1b94-38df-4a2d-a2be-9715e374824e';
 const otherUserId = 'ee779a68-a338-4d7f-9f62-7ca7b1178326';
@@ -386,4 +386,38 @@ test('PostgreSQL adapter validates scope and uses atomic storage operations', as
   assert.match(migration, /REFERENCES auth_users/u);
   assert.match(migration, /code_hash TEXT NOT NULL/u);
   assert.doesNotMatch(migration, /\bDROP\b/iu);
+});
+
+test('MFA migrations register auth dependencies and MFA in one migration pass', async () => {
+  const coreMigrations = new Map();
+  const moduleMigrations = new Map();
+  const pool = {
+    async connect() {
+      return {
+        async query(sql, parameters = []) {
+          if (sql.includes('SELECT version, id, checksum FROM schema_migrations')) {
+            return { rows: [...coreMigrations.values()] };
+          }
+          if (sql.includes('SELECT module_id, version, id, checksum FROM module_migrations')) {
+            return { rows: [...moduleMigrations.values()] };
+          }
+          if (sql.startsWith('INSERT INTO schema_migrations')) {
+            const [version, id, checksum] = parameters;
+            coreMigrations.set(version, { version, id, checksum });
+          }
+          if (sql.startsWith('INSERT INTO module_migrations')) {
+            const [moduleId, version, id, checksum] = parameters;
+            moduleMigrations.set(`${moduleId}:${version}`, {
+              module_id: moduleId, version, id, checksum,
+            });
+          }
+          return { rows: [] };
+        },
+        release() {},
+      };
+    },
+  };
+  await runMfaMigrations(pool, 'app_auth');
+  assert.equal(moduleMigrations.get('auth:1').id, '0001_local_authentication');
+  assert.equal(moduleMigrations.get('mfa:1').id, '0001_local_mfa');
 });

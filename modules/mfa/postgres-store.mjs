@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
-import { runAuthMigrations } from '../auth/postgres-store.mjs';
 import { runMigrations } from '../database/index.mjs';
 
+const authMigration = Object.freeze({
+  moduleId: 'auth',
+  version: 1,
+  id: '0001_local_authentication',
+  sql: readFileSync(new URL('../auth/migrations/0001_local_authentication.sql', import.meta.url), 'utf8'),
+});
 const migration = Object.freeze({
   moduleId: 'mfa',
   version: 1,
@@ -41,8 +46,7 @@ function validRecoveryCodeHashes(hashes) {
 }
 
 export async function runMfaMigrations(pool, schemaName) {
-  await runAuthMigrations(pool, schemaName);
-  return runMigrations(pool, schemaName, { extensionMigrations: [migration] });
+  return runMigrations(pool, schemaName, { extensionMigrations: [authMigration, migration] });
 }
 
 export function createPostgresMfaStore(options) {

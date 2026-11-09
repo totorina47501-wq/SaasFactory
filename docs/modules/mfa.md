@@ -9,11 +9,11 @@ d'exemple n'est inclus.
 ## Contrat et prérequis
 
 Le service utilise les API cryptographiques intégrées à Node.js et le PostgreSQL
-local déjà utilisé par le module `auth`. Les migrations auth doivent exister
-avant l'accès à la table des utilisateurs ; `runMfaMigrations(pool, schemaName)`
-les applique puis installe la migration `mfa@1.0.0`. Les deux modules doivent
-utiliser le même schéma. Les migrations n'ont pas de migration descendante
-destructive.
+local déjà utilisé par le module `auth`. `runMfaMigrations(pool, schemaName)`
+enregistre les migrations auth et MFA ensemble dans le registre versionné du
+module database, et crée les tables dépendantes dans le même schéma. Les deux
+modules doivent utiliser le même schéma. Les migrations n'ont pas de migration
+descendante destructive.
 
 `createMfaService({ store, encryptionKey, reauthenticate, clock? })` refuse les
 options inconnues. `encryptionKey` doit être un `Buffer` de 32 octets fourni
