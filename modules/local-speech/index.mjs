@@ -367,8 +367,9 @@ export function createWhisperCppAsrEngine(options) {
     kind: 'asr',
     metadata,
     async transcribe(input) {
-      exactObject(input, ['audio', 'durationSeconds', 'language', 'signal'],
-        ['audio', 'durationSeconds', 'language']);
+      exactObject(input, ['consent', 'audio', 'durationSeconds', 'language', 'signal'],
+        ['consent', 'audio', 'durationSeconds', 'language']);
+      if (input.consent !== true) fail('CONSENT_REQUIRED');
       validateSignal(input.signal);
       validateAudio(input.audio, input.durationSeconds, limits);
       if (typeof input.language !== 'string' || !languages.includes(input.language)) {
@@ -437,7 +438,8 @@ export function createPiperTtsEngine(options) {
     kind: 'tts',
     metadata,
     async synthesize(input) {
-      exactObject(input, ['text', 'signal'], ['text']);
+      exactObject(input, ['consent', 'text', 'signal'], ['consent', 'text']);
+      if (input.consent !== true) fail('CONSENT_REQUIRED');
       validateSignal(input.signal);
       if (typeof input.text !== 'string' || input.text.trim().length === 0 ||
           input.text.length > limits.maxTextCodeUnits ||
@@ -488,6 +490,7 @@ export function createLocalSpeechService(options) {
       let segments;
       try {
         segments = await config.asrEngine.transcribe({
+          consent: true,
           audio: input.audio,
           durationSeconds: input.durationSeconds,
           language: input.language,
@@ -516,7 +519,11 @@ export function createLocalSpeechService(options) {
       if (input.signal?.aborted) fail('INTERRUPTED');
       let result;
       try {
-        result = await config.ttsEngine.synthesize({ text: input.text, signal: input.signal });
+        result = await config.ttsEngine.synthesize({
+          consent: true,
+          text: input.text,
+          signal: input.signal,
+        });
       } catch (error) {
         if (error instanceof LocalSpeechError) throw error;
         fail('ENGINE_FAILED');

@@ -141,6 +141,9 @@ test('rejects absent consent, overlong input, invalid language and invalid model
   const audio = speech(whisperEngine(executable, state.model));
   await errorCode(audio.transcribe({ consent: false, audio: AUDIO, durationSeconds: 1, language: 'en' }),
     'CONSENT_REQUIRED');
+  await errorCode(whisperEngine(executable, state.model).transcribe({
+    consent: false, audio: AUDIO, durationSeconds: 1, language: 'en',
+  }), 'CONSENT_REQUIRED');
   await errorCode(audio.transcribe({
     consent: true, audio: AUDIO, durationSeconds: 601, language: 'en',
   }), 'INVALID_AUDIO');
@@ -155,7 +158,7 @@ test('rejects absent consent, overlong input, invalid language and invalid model
   }), 'UNSUPPORTED_LANGUAGE');
   const changedModel = { ...state.model, sha256: '0'.repeat(64) };
   await errorCode(whisperEngine(executable, changedModel).transcribe({
-    audio: AUDIO, durationSeconds: 1, language: 'en',
+    consent: true, audio: AUDIO, durationSeconds: 1, language: 'en',
   }), 'MODEL_INTEGRITY_FAILED');
 });
 
@@ -163,11 +166,11 @@ test('maps unavailable executables and timeouts to stable errors', async t => {
   const state = await setup();
   t.after(() => rm(state.directory, { recursive: true, force: true }));
   await errorCode(whisperEngine(path.join(state.directory, 'missing'), state.model).transcribe({
-    audio: AUDIO, durationSeconds: 1, language: 'en',
+    consent: true, audio: AUDIO, durationSeconds: 1, language: 'en',
   }), 'ENGINE_UNAVAILABLE');
   const sleeper = await fakeExecutable(state.directory, 'slow-whisper', 'setTimeout(() => {}, 5000);');
   await errorCode(whisperEngine(sleeper, state.model, { timeoutMs: 25 }).transcribe({
-    audio: AUDIO, durationSeconds: 1, language: 'en',
+    consent: true, audio: AUDIO, durationSeconds: 1, language: 'en',
   }), 'ENGINE_TIMEOUT');
 });
 
@@ -183,7 +186,7 @@ test('rejects malformed, overlapping and out-of-range ASR output', async t => {
     ] }));
   `);
   await errorCode(whisperEngine(executable, state.model).transcribe({
-    audio: AUDIO, durationSeconds: 1, language: 'en',
+    consent: true, audio: AUDIO, durationSeconds: 1, language: 'en',
   }), 'INVALID_ENGINE_OUTPUT');
 });
 
@@ -211,6 +214,7 @@ test('Piper receives text over stdin, never through shell arguments, and returns
     });
   `);
   const engine = piperEngine(executable, state.model, { voiceConfig: state.voiceConfig });
+  await errorCode(engine.synthesize({ consent: false, text: 'not allowed' }), 'CONSENT_REQUIRED');
   const audio = speech(whisperEngine(
     await fakeExecutable(state.directory, 'whisper', 'process.exit(0);'),
     state.model,
@@ -229,7 +233,7 @@ test('Piper receives text over stdin, never through shell arguments, and returns
     sha256: '0'.repeat(64),
   };
   await errorCode(piperEngine(executable, state.model, { voiceConfig: invalidConfig }).synthesize({
-    text: 'synthetic voice',
+    consent: true, text: 'synthetic voice',
   }), 'MODEL_INTEGRITY_FAILED');
 });
 
