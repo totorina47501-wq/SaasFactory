@@ -86,6 +86,33 @@ test('rejects unknown fields, including configuration extensions and executable 
   expectCode(() => validateModuleDescriptor(withArrayAccessor), 'INVALID_INPUT');
 });
 
+test('rejects accessors in nested data before executing any getter', () => {
+  const nested = descriptor();
+  Object.defineProperty(nested.configuration.properties, 'unsafe', {
+    enumerable: true,
+    get() { throw Error('getter must never run'); },
+  });
+  expectCode(() => validateModuleDescriptor(nested), 'INVALID_INPUT');
+  const context = { contractVersion: 1, tenantId: 'tenant-1', requestId: 'req-1' };
+  Object.defineProperty(context, 'tenantId', {
+    enumerable: true,
+    get() { throw Error('getter must never run'); },
+  });
+  expectCode(() => assertTenantContext(context), 'INVALID_INPUT');
+});
+
+test('rejects sparse descriptor evidence and generated paths', () => {
+  for (const field of ['permissions', 'generatedFiles', 'tests', 'dependencies']) {
+    const invalid = descriptor();
+    invalid[field] = Array(1);
+    expectCode(() => validateModuleDescriptor(invalid), 'INVALID_INPUT');
+  }
+  const invalid = descriptor();
+  invalid.maturity = 'verified';
+  invalid.verification = Array(1);
+  expectCode(() => validateModuleDescriptor(invalid), 'INVALID_INPUT');
+});
+
 test('rejects unsupported contract and configuration versions', () => {
   expectCode(() => validateModuleDescriptor({ ...descriptor(), contractVersion: 2 }), 'INVALID_VERSION');
   const wrongConfigVersion = descriptor();
