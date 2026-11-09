@@ -106,25 +106,4 @@ jobs:
       - name: Build generated project
         working-directory: ${{ runner.temp }}/generated/atelier-exemple
         run: npm run build
-  wake-orchestrator:
-    name: Wake trusted orchestrator on green main
-    # Runs only from a successful main push CI, NEVER from a Copilot PR.
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    needs: [generator, generated-app]
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: Wake only the default-branch dispatcher
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'saas-factory-agent-dispatch.yml',
-              ref: 'main'
-            });
+
