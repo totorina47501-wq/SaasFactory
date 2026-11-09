@@ -974,3 +974,12 @@ test('draft handoff refuses CI failures, missing free-review jobs and out-of-sco
   const outOfScope = copilotHandoffMocks({changedFiles: ['README.md']});
   assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(outOfScope)), null);
 });
+
+test('draft handoff exposes a safe skip reason when completed Copilot session is missing', async () => {
+  const state = copilotHandoffMocks({agentRuns: []});
+  const reasons = [];
+  assert.equal(await orchestration.prepareCompletedCopilotPullRequest({
+    ...handoffArgs(state), diagnose: reason => reasons.push(reason)
+  }), null);
+  assert.deepEqual(reasons, ['copilot-session-unverified']);
+});
