@@ -20,7 +20,6 @@ const scaffoldFields = [
 ];
 const moduleFields = ['id', 'version'];
 const limitationFields = ['id', 'version', 'limitations'];
-const limitationIdFields = ['id', 'version', 'limitations'];
 const specialists = new Set([
   'product-architect', 'generator-engineer', 'qa-engineer', 'security-engineer',
   'platform-engineer', 'ux-accessibility', 'documentation-release',
@@ -184,6 +183,9 @@ function validateIntakeV2(raw) {
     fail('capabilities contains an unsupported identifier');
   }
 
+  if (!Array.isArray(scaffold.acceptedLimitations) || scaffold.acceptedLimitations.length > 128) {
+    fail('scaffold.acceptedLimitations is invalid');
+  }
   for (const [index, item] of scaffold.acceptedLimitations.entries()) {
     exactKeys(item, limitationFields, `scaffold.acceptedLimitations[${index}]`);
     if (!Array.isArray(item.limitations)) fail('scaffold.acceptedLimitations is invalid');

@@ -79,7 +79,10 @@ function verifyIntake(raw){
 }
 function parseIntakeText(text){
  try{return parseConfigText(text)}
- catch{throw Error('Invalid intake JSON')}
+ catch(error){
+  if(error.message.startsWith('Duplicate JSON key:'))throw Error('Duplicate JSON key');
+  throw Error('Invalid intake JSON')
+ }
 }
 function compileIntakeV1(raw){
  const verified=verifyIntake(raw);
