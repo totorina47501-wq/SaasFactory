@@ -1,6 +1,7 @@
 {
   "catalogVersion": 1,
-  "scope": "design-references-only",
+  "scope": "design-references-and-reviewed-scaffolds",
+  "moduleRegistryVersion": 1,
   "source": "Project3 architecture inventory; never copy product logic, migrations, data, secrets or prompts",
   "capabilities": [
     {
@@ -236,6 +237,198 @@
       "scaffold": null,
       "owner": "platform-engineer",
       "reference": "app/api/admin/; lib/security/quota.ts"
+    }
+  ],
+  "modules": [
+    {
+      "descriptor": {
+        "contractVersion": 1,
+        "id": "ai-disabled",
+        "version": "1.0.0",
+        "description": "Désactivation locale explicite des fonctions IA.",
+        "category": "ai",
+        "maturity": "scaffold",
+        "prerequisites": [],
+        "dependencies": [],
+        "incompatibilities": [],
+        "configuration": {
+          "schemaVersion": 1,
+          "type": "object",
+          "additionalProperties": false,
+          "required": [],
+          "properties": {}
+        },
+        "permissions": [],
+        "generatedFiles": ["lib/ai-disabled.mjs"],
+        "tests": ["tests/smoke.test.mjs"],
+        "hardware": {},
+        "security": {
+          "dataClassification": "public",
+          "handlesSecrets": false,
+          "permissionsReviewed": true
+        },
+        "offline": {"supported": true, "networkRequired": false},
+        "update": "Revalider la version et les tests avant mise à jour.",
+        "rollback": "Retirer la sélection et régénérer vers un dossier neuf."
+      },
+      "limitations": [
+        {
+          "id": "disabled-by-design",
+          "description": "Ce module désactive l'IA et ne fournit aucun modèle ni service IA."
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "contractVersion": 1,
+        "id": "api",
+        "version": "1.0.0",
+        "description": "Exemple de route API locale sans authentification ni webhook.",
+        "category": "api",
+        "maturity": "scaffold",
+        "prerequisites": [],
+        "dependencies": [],
+        "incompatibilities": [],
+        "configuration": {
+          "schemaVersion": 1,
+          "type": "object",
+          "additionalProperties": false,
+          "required": [],
+          "properties": {}
+        },
+        "permissions": [],
+        "generatedFiles": ["app/api/example/route.js"],
+        "tests": ["tests/smoke.test.mjs"],
+        "hardware": {},
+        "security": {
+          "dataClassification": "public",
+          "handlesSecrets": false,
+          "permissionsReviewed": true
+        },
+        "offline": {"supported": true, "networkRequired": false},
+        "update": "Revalider la version et les tests avant mise à jour.",
+        "rollback": "Retirer la sélection et régénérer vers un dossier neuf."
+      },
+      "limitations": [
+        {
+          "id": "example-route-only",
+          "description": "La route est un exemple local et ne fournit ni authentification, ni clés API, ni webhook."
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "contractVersion": 1,
+        "id": "auth",
+        "version": "1.0.0",
+        "description": "Frontière d'authentification locale avec fournisseur injecté par l'application.",
+        "category": "identity",
+        "maturity": "scaffold",
+        "prerequisites": [],
+        "dependencies": [],
+        "incompatibilities": [],
+        "configuration": {
+          "schemaVersion": 1,
+          "type": "object",
+          "additionalProperties": false,
+          "required": [],
+          "properties": {}
+        },
+        "permissions": [],
+        "generatedFiles": ["lib/auth.mjs"],
+        "tests": ["tests/smoke.test.mjs"],
+        "hardware": {},
+        "security": {
+          "dataClassification": "tenant",
+          "handlesSecrets": false,
+          "permissionsReviewed": true
+        },
+        "offline": {"supported": true, "networkRequired": false},
+        "update": "Revalider la version et les tests avant mise à jour.",
+        "rollback": "Retirer la sélection et régénérer vers un dossier neuf."
+      },
+      "limitations": [
+        {
+          "id": "injected-boundary-only",
+          "description": "Le squelette ne crée aucun compte et ne configure aucun fournisseur d'identité."
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "contractVersion": 1,
+        "id": "billing-test",
+        "version": "1.0.0",
+        "description": "Simulation locale de parcours de facturation en mode test.",
+        "category": "entitlements",
+        "maturity": "scaffold",
+        "prerequisites": [],
+        "dependencies": [],
+        "incompatibilities": [],
+        "configuration": {
+          "schemaVersion": 1,
+          "type": "object",
+          "additionalProperties": false,
+          "required": [],
+          "properties": {}
+        },
+        "permissions": [],
+        "generatedFiles": ["lib/billing-test.mjs"],
+        "tests": ["tests/smoke.test.mjs"],
+        "hardware": {},
+        "security": {
+          "dataClassification": "public",
+          "handlesSecrets": false,
+          "permissionsReviewed": true
+        },
+        "offline": {"supported": true, "networkRequired": false},
+        "update": "Revalider la version et les tests avant mise à jour.",
+        "rollback": "Retirer la sélection et régénérer vers un dossier neuf."
+      },
+      "limitations": [
+        {
+          "id": "simulation-only",
+          "description": "Le parcours est simulé localement et ne traite ni paiement ni facturation réelle."
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "contractVersion": 1,
+        "id": "media",
+        "version": "1.0.0",
+        "description": "Fixtures média synthétiques et locales sans stockage distant.",
+        "category": "media",
+        "maturity": "scaffold",
+        "prerequisites": [],
+        "dependencies": [],
+        "incompatibilities": [],
+        "configuration": {
+          "schemaVersion": 1,
+          "type": "object",
+          "additionalProperties": false,
+          "required": [],
+          "properties": {}
+        },
+        "permissions": [],
+        "generatedFiles": ["lib/media-fixture.mjs", "public/media-fixture.svg"],
+        "tests": ["tests/smoke.test.mjs"],
+        "hardware": {},
+        "security": {
+          "dataClassification": "public",
+          "handlesSecrets": false,
+          "permissionsReviewed": true
+        },
+        "offline": {"supported": true, "networkRequired": false},
+        "update": "Revalider la version et les tests avant mise à jour.",
+        "rollback": "Retirer la sélection et régénérer vers un dossier neuf."
+      },
+      "limitations": [
+        {
+          "id": "synthetic-fixtures-only",
+          "description": "Les fichiers sont des exemples synthétiques et ne fournissent ni upload ni stockage."
+        }
+      ]
     }
   ]
 }
