@@ -52,7 +52,7 @@ function validateCatalog(catalog) {
   assertExactKeys(catalog.limits, new Set([
     'maxActiveMissions', 'maxAssignmentsPerRun', 'maxCiRetriesPerPrSha', 'scheduleCron'
   ]), 'Catalog limits');
-  assert(catalog.limits?.maxActiveMissions === 2 && catalog.limits?.maxAssignmentsPerRun === 1 &&
+  assert(catalog.limits?.maxActiveMissions === 4 && catalog.limits?.maxAssignmentsPerRun === 1 &&
     catalog.limits?.maxCiRetriesPerPrSha === 2 && catalog.limits?.scheduleCron === '*/10 * * * *',
   'Catalog limits do not match the orchestration contract');
   assert(Array.isArray(catalog.tasks) && Array.isArray(catalog.externalHolds), 'Catalog collections are missing');
