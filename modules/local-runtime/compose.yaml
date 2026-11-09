@@ -16,7 +16,7 @@ services:
       PORT: "3000"
       MEDIA_ENABLED: ${MEDIA_ENABLED:-false}
       LOCAL_MODEL_ENABLED: ${LOCAL_MODEL_ENABLED:-false}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-saas}:${POSTGRES_PASSWORD:?Set a local-only POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-saas}
+      DATABASE_URL: ${DATABASE_URL:?Set a local-only DATABASE_URL pointing to postgres}
     depends_on:
       postgres:
         condition: service_healthy

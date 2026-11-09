@@ -143,7 +143,7 @@ export function diagnoseLocalRuntime(value, options) {
         ['-h', '127.0.0.1', '-p', String(config.postgres.hostPort), '-t', '2'],
       ),
       model,
-      cache: config.optional.cache ? 'configured' : 'disabled',
+      cache: config.optional.cache ? 'not-checked' : 'disabled',
     }),
   });
 }

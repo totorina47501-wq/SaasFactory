@@ -84,6 +84,8 @@ test('diagnoses local tools without network access and leaves optional engines d
   assert.equal(failed.checks.ffmpeg, 'unavailable');
   assert.equal(failed.checks.ffprobe, 'unavailable');
   assert.equal(failed.checks.model, 'available');
+  enabled.optional.cache = true;
+  assert.equal(diagnoseLocalRuntime(enabled, { probe: () => 'available' }).checks.cache, 'not-checked');
 });
 
 test('diagnostic probe failures are reported without exposing error details', () => {
@@ -123,6 +125,7 @@ test('Compose and container artifacts pin images, isolate local ports, bound ser
   assert.match(compose, /mem_limit:/u);
   assert.match(compose, /healthcheck:/u);
   assert.match(compose, /postgres_data:/u);
+  assert.match(compose, /DATABASE_URL: \$\{DATABASE_URL:\?/u);
   assert.match(dockerfile, /^FROM node:22\.12\.0-bookworm-slim AS build$/mu);
   assert.match(dockerfile, /^USER node$/mu);
   assert.doesNotMatch(dockerfile, /\b(?:ARG|ENV)\s+\w*(?:SECRET|TOKEN|PASSWORD|KEY)\w*/iu);
