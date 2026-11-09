@@ -16,8 +16,24 @@ référence documentées :
 
 | Moteur | Version | Licence du moteur | Modèle requis | Capacité |
 | --- | --- | --- | --- | --- |
-| `whisper.cpp` | 1.7.6 | MIT | poids Whisper au format ggml ; licence, version, taille et SHA-256 propres au fichier | ASR CPU ; segments horodatés |
-| Piper (`piper-tts`) | 1.3.0 | GPL-3.0 | paire voix `.onnx` + métadonnées `.onnx.json` ; licence, version, taille et SHA-256 propres à la voix | TTS CPU ; pas d'horodatages |
+| [`whisper.cpp`](https://github.com/ggml-org/whisper.cpp/tree/v1.7.6) | 1.7.6 | MIT | poids Whisper au format ggml ; licence, version, taille et SHA-256 propres au fichier | ASR CPU ; segments horodatés |
+| [`piper-tts`](https://github.com/OHF-Voice/piper1-gpl/tree/v1.3.0) | 1.3.0 | GPL-3.0-or-later | paire voix `.onnx` + métadonnées `.onnx.json` ; licence, version, taille et SHA-256 propres à chaque fichier | TTS CPU ; pas d'horodatages |
+
+Référence concrète pour l'ASR anglais : `ggml-tiny.en.bin` depuis le dépôt
+[`ggerganov/whisper.cpp` à la révision `6034871ec87c84e342efab769d4c5c06cd126db3`](https://huggingface.co/ggerganov/whisper.cpp/tree/6034871ec87c84e342efab769d4c5c06cd126db3).
+Le fichier fait **77 704 715 octets**, a pour licence déclarée **MIT** et SHA-256
+`921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f`.
+Le dépôt amont estime environ **390 MB de mémoire** pour ce modèle; c'est une
+estimation, pas une garantie. `tiny.en` ne prend en charge que l'anglais. La
+licence et les valeurs de toute autre version de modèle doivent être revérifiées.
+
+Références d'installation opt-in : [build et CLI whisper.cpp](https://github.com/ggml-org/whisper.cpp/blob/v1.7.6/examples/cli/README.md),
+[instructions CLI Piper](https://github.com/OHF-Voice/piper1-gpl/blob/v1.3.0/docs/CLI.md),
+[licences des voix Piper](https://github.com/OHF-Voice/piper1-gpl/blob/v1.3.0/docs/VOICES.md).
+Pour installer explicitement la distribution Python Piper dans un environnement
+isolé, utiliser par exemple `python -m pip install 'piper-tts==1.3.0'`. Installer
+`whisper.cpp` en suivant les instructions de build du tag v1.7.6. Ces opérations
+sont à la charge de l'opérateur, jamais exécutées par l'application ou les tests.
 
 Les licences des poids/voix sont distinctes de celles des moteurs et varient
 selon chaque modèle. Aucune licence, taille ou empreinte de modèle n'est
@@ -26,6 +42,13 @@ officielle du projet, relire sa licence, calculer sa taille et son SHA-256, puis
 fournir ces valeurs exactes dans la configuration. Les valeurs sont comparées
 au fichier local au premier usage; les liens symboliques, fichiers absents,
 tailles incorrectes et empreintes différentes échouent sans repli.
+
+Aucune voix Piper n'est activée ou recommandée par défaut : vérifier les droits
+des poids eux-mêmes dans la fiche de la voix, et ne pas assimiler la licence du
+jeu de données à celle des poids dérivés. Enregistrer et vérifier séparément
+l'empreinte, la taille et la licence déclarée du `.onnx` et de son `.onnx.json`.
+Les projets upstream ne spécifient pas de minimum CPU/RAM portable pour chaque
+voix ; renseigner le budget mémoire mesuré pour chaque modèle et machine cible.
 
 Exemple de configuration (chemins et valeurs à remplacer par des artefacts
 installés et vérifiés explicitement) :
@@ -42,13 +65,13 @@ const asr = createWhisperCppAsrEngine({
   runtimeVersion: '1.7.6',
   model: {
     path: '/opt/local-speech/ggml-model.bin',
-    version: 'version-du-modele',
-    license: 'licence-du-modele',
-    sizeBytes: 1,
-    sha256: 'a'.repeat(64),
-    minimumMemoryBytes: 1,
+    version: 'ggml-tiny.en-6034871',
+    license: 'MIT',
+    sizeBytes: 77704715,
+    sha256: '921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f',
+    minimumMemoryBytes: 390000000,
   },
-  languages: ['fr'],
+  languages: ['en'],
 });
 const tts = createPiperTtsEngine({
   executable: '/opt/local-speech/piper',
@@ -73,13 +96,15 @@ const tts = createPiperTtsEngine({
 const speech = createLocalSpeechService({ asrEngine: asr, ttsEngine: tts });
 ```
 
-Les tailles, empreintes et budgets mémoire de l'exemple sont des valeurs
-factices invalides en production. Renseigner un `minimumMemoryBytes` réaliste
-pour chaque artefact selon les exigences du modèle et la mémoire de pointe
-mesurée avec le moteur/version choisis. Le module publie cette exigence dans ses
-métadonnées et refuse une valeur inférieure à la taille du fichier. Les exigences
-CPU/RAM dépendent du modèle et ne peuvent pas être déduites uniquement de sa
-taille sur disque. Pour calculer la taille et l'empreinte d'un fichier installé :
+Les chemins sont des exemples : pour le modèle ASR cité, ils doivent désigner le
+fichier téléchargé depuis la révision épinglée. Les valeurs de l'exemple Piper
+sont factices et invalides en production. Pour chaque artefact, renseigner un
+`minimumMemoryBytes` réaliste selon les exigences du modèle et la mémoire de
+pointe mesurée avec le moteur/version choisis. Le module publie cette exigence
+dans ses métadonnées et refuse une valeur inférieure à la taille du fichier. Les
+exigences CPU/RAM dépendent du modèle et ne peuvent pas être déduites uniquement
+de sa taille sur disque. Pour calculer la taille et l'empreinte d'un fichier
+installé :
 
 ```sh
 stat -c '%s' /opt/local-speech/ggml-model.bin

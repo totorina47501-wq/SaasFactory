@@ -236,6 +236,10 @@ function runProcess(executable, args, { timeoutMs, signal, input } = {}) {
       error.code === 'ENOENT' ? 'ENGINE_UNAVAILABLE' : 'ENGINE_FAILED',
     )));
     child.once('close', code => finish(code === 0 ? undefined : new LocalSpeechError('ENGINE_FAILED')));
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
     if (input !== undefined) {
       child.stdin.once('error', () => finish(new LocalSpeechError('ENGINE_FAILED')));
       child.stdin.end(input);
