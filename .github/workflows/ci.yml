@@ -12,6 +12,36 @@ concurrency:
   group: saas-factory-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  free-review:
+    name: Free deterministic PR review
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check PR patch integrity and forbidden tracked secrets
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git diff --check "$BASE_SHA" "$HEAD_SHA"
+          git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" > /tmp/changed-files.txt
+          if grep -Ei '(^|/)(\.env($|\.)|id_rsa$|id_ed25519$|.*\.(pem|p12|pfx|key)$)' /tmp/changed-files.txt; then
+            echo '::error::Potential secret material tracked in this PR'
+            exit 1
+          fi
+          if git diff --name-only --diff-filter=U "$BASE_SHA" "$HEAD_SHA" | grep -q .; then
+            echo '::error::Unmerged files detected'
+            exit 1
+          fi
+          echo 'Free PR patch checks passed (no AI credits consumed).'
   generator:
     runs-on: ubuntu-latest
     timeout-minutes: 10
