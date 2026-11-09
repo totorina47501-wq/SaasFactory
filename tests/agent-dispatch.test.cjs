@@ -211,3 +211,24 @@ test('branch refresh never recursively dispatches before GitHub re-runs CI',asyn
  assert.equal(x.report.decision,'prepared:branch-updated:#81');
  assert.equal(x.calls.filter(c=>c[0]==='wake').length,0);
 });
+
+
+test('trusted PR ready wake can only signal after same-repo Copilot identity and exact green CI',()=>{
+ const path=require('node:path');
+ const wake=fs.readFileSync(path.join(__dirname,'../.github/workflows/saas-factory-copilot-ready-wake.yml'),'utf8');
+ assert.match(wake,/pull_request_target:/);
+ assert.match(wake,/types: \[ready_for_review\]/);
+ assert.match(wake,/branches: \[main\]/);
+ assert.match(wake,/github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
+ assert.match(wake,/github\.event\.pull_request\.base\.ref == 'main'/);
+ assert.match(wake,/github\.event\.pull_request\.user\.login == 'Copilot'/);
+ assert.match(wake,/latest\.draft !== false/);
+ assert.match(wake,/workflow\.data\.path !== '\.github\/workflows\/ci\.yml'/);
+ assert.match(wake,/run\.status !== 'completed'/);
+ assert.match(wake,/Free deterministic PR review/);
+ assert.match(wake,/github\.rest\.actions\.createWorkflowDispatch/);
+ assert.doesNotMatch(wake,/actions\/checkout|COPILOT_DISPATCH_TOKEN|run: node|run: npm/);
+ assert.match(wake,/^permissions:\s*\n  actions: write\n  contents: read\n  pull-requests: read/m);
+ const ci=fs.readFileSync(path.join(__dirname,'../.github/workflows/ci.yml'),'utf8');
+ assert.doesNotMatch(ci,/COPILOT_DISPATCH_TOKEN|actions: write/);
+});
