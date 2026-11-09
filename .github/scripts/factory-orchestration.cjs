@@ -852,7 +852,7 @@ async function run({github, context, core, io = fs}) {
           report.merged.push(pr.number);
           break;
         }
-        if (!detailedPr.draft && /^copilot\\//.test(detailedPr.head?.ref || '')) {
+        if (!detailedPr.draft && String(detailedPr.head?.ref || '').startsWith('copilot/')) {
           report.waiting.push({pr: pr.number, reason: 'merge-evidence-or-protection-unverified'});
         }
       }
