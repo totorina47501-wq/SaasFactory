@@ -52,7 +52,7 @@ module.exports = async ({github, context, core, fs, orchestration = factoryOrche
     report.active=[...active].sort((a,b)=>a-b);
     // Unknown PR ownership: do not start potentially overlapping work.
     if(report.blockers.length) {report.decision='blocked:unlinked-pr';return;}
-    if(active.size>=2){report.decision='capacity-full';return;}
+    if(active.size>=4){report.decision='capacity-full';return;}
     const candidates=work.filter(i=>has(i,'agent:approved')&&!has(i,'agent:blocked')&&!has(i,'agent:in-progress')&&!has(i,'agent:review')&&!active.has(i.number)&&i.assignees.length===0);
     const weight=i=>has(i,'priority:p0')?0:has(i,'priority:p1')?1:has(i,'priority:p2')?2:3;
     candidates.sort((a,b)=>weight(a)-weight(b)||a.number-b.number);

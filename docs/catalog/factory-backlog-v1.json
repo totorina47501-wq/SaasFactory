@@ -4,7 +4,7 @@
   "authorizedAt": "2026-11-06",
   "authorization": "Demande explicite du propriétaire : backlog complet et mode full auto. Autorisation bornée aux tâches enregistrées, sans déploiement, fournisseur, finance ni contournement de protections ou d'un refus d'autorisation.",
   "limits": {
-    "maxActiveMissions": 2,
+    "maxActiveMissions": 4,
     "maxAssignmentsPerRun": 1,
     "maxCiRetriesPerPrSha": 2,
     "scheduleCron": "*/10 * * * *"

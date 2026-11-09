@@ -26,7 +26,7 @@ test('authorized backlog has unique real issue identities and bounded automation
   assert.equal(backlog.schemaVersion, 1);
   assert.equal(backlog.repository, 'totorina47501-wq/SaasFactory');
   assert.equal(backlog.tasks.length, 45);
-  assert.deepEqual(backlog.limits, {maxActiveMissions:2,maxAssignmentsPerRun:1,maxCiRetriesPerPrSha:2,scheduleCron:'*/10 * * * *'});
+  assert.deepEqual(backlog.limits, {maxActiveMissions:4,maxAssignmentsPerRun:1,maxCiRetriesPerPrSha:2,scheduleCron:'*/10 * * * *'});
   assert.equal(new Set(backlog.tasks.map(t=>t.key)).size, backlog.tasks.length);
   assert.equal(new Set(backlog.tasks.map(t=>t.issue)).size, backlog.tasks.length);
   for (const task of backlog.tasks) {
