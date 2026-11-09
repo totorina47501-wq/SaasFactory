@@ -329,6 +329,32 @@ export function createObservabilityService(options) {
     return output;
   }
 
+  async function rotateExpiredCurrent() {
+    const currentPath = auditFilePath(auditDirectory, 'audit-current.jsonl');
+    let info = await lstat(currentPath).catch(error =>
+      error.code === 'ENOENT' ? null : fail('AUDIT_UNAVAILABLE'));
+    if (!info) return;
+    if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0 ||
+        info.size > limits.maxAuditFileBytes) fail('UNSAFE_STORAGE');
+    let records;
+    try {
+      records = (await readFile(currentPath, 'utf8')).split('\n').filter(Boolean)
+        .map(line => validateStoredAuditRecord(JSON.parse(line)));
+    } catch {
+      fail('AUDIT_UNAVAILABLE');
+    }
+    if (!records.length) return;
+    const currentTime = nowValue(clock);
+    const latestEventTime = Math.max(...records.map(record => Date.parse(record.recordedAt)));
+    if (currentTime - latestEventTime <= limits.auditRetentionMs) return;
+    const archivePath = auditFilePath(
+      auditDirectory,
+      `audit-${String(latestEventTime).padStart(13, '0')}-${randomUUID()}.jsonl`,
+    );
+    await rename(currentPath, archivePath).catch(() => fail('AUDIT_UNAVAILABLE'));
+    await createAuditFile(currentPath);
+  }
+
   async function pruneAuditFiles() {
     const currentTime = nowValue(clock);
     const files = await auditFiles(auditDirectory, limits.maxAuditFileBytes);
@@ -394,8 +420,9 @@ export function createObservabilityService(options) {
     return Object.freeze({ eventId: record.eventId, recordedAt });
   }
 
-  async function cleanup() {
+  async function performCleanup() {
     await ensurePrivateDirectory(auditDirectory);
+    await rotateExpiredCurrent();
     await pruneAuditFiles();
     const cutoff = nowValue(clock) - limits.auditRetentionMs;
     let removedErrors = 0;
@@ -409,7 +436,13 @@ export function createObservabilityService(options) {
     return Object.freeze({ removedErrors, retainedErrors: errors.length });
   }
 
-  async function readAudit(contextValue) {
+  function cleanup() {
+    const operation = auditQueue.then(performCleanup);
+    auditQueue = operation.catch(() => {});
+    return operation;
+  }
+
+  async function readAuditRecords(contextValue) {
     const context = validateContext(contextValue);
     if (typeof authorizeAuditRead !== 'function') fail('AUDIT_READ_DENIED');
     let allowed = false;
@@ -441,6 +474,12 @@ export function createObservabilityService(options) {
       }
     }
     return Object.freeze(records.slice(-1000).map(record => Object.freeze(record)));
+  }
+
+  function readAudit(contextValue) {
+    const operation = auditQueue.then(() => readAuditRecords(contextValue));
+    auditQueue = operation.catch(() => {});
+    return operation;
   }
 
   async function scheduleCleanup(input) {

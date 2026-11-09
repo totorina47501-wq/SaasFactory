@@ -198,6 +198,21 @@ test('rotates bounded audit files and applies retention during cleanup', async t
   assert.equal(fixture.service.metrics().counters.cleanup_runs_total, 1);
 });
 
+test('expires the active audit segment when every retained event is past its retention window', async t => {
+  const fixture = await setup({
+    authorizeAuditRead: async () => true,
+    limits: { auditRetentionMs: 100 },
+  });
+  t.after(fixture.dispose);
+
+  await fixture.service.audit.append(context(), event());
+  fixture.setNow(1_700_000_000_200);
+  await fixture.service.cleanup();
+
+  assert.deepEqual(await fixture.service.audit.read(context()), []);
+  assert.deepEqual(await readdir(join(fixture.directory, 'audit')), ['audit-current.jsonl']);
+});
+
 test('schedules cleanup as an idempotent jobs queue request without starting a worker', async t => {
   const fixture = await setup();
   t.after(fixture.dispose);

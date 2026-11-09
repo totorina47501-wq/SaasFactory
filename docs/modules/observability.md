@@ -103,7 +103,10 @@ aucune modification ou suppression. Le stockage est borné par rotation :
 | Erreurs récentes en mémoire | 50 | 1–100 |
 
 `cleanup()` supprime les segments archivés expirés ou excédant la limite et les
-entrées d'erreurs récentes expirées. Le fichier courant n'est pas supprimé.
+entrées d'erreurs récentes expirées. Si tous les événements du segment courant
+sont expirés, il l'archive puis applique la rétention ; un segment contenant un
+événement récent reste intact, même si cela conserve temporairement des entrées
+plus anciennes du même segment. Le fichier courant vide n'est pas supprimé.
 `createCleanupHandler()` fournit un handler compatible avec `modules/jobs`.
 `scheduleCleanup({ jobs, authorization, intervalMs })` ajoute un job
 `observability.cleanup` idempotent par fenêtre, sur la file Jobs locale. Une
