@@ -7,7 +7,7 @@ const REPOSITORY = 'totorina47501-wq/SaasFactory';
 const CATALOG_PATH = path.join(__dirname, '../../docs/catalog/factory-backlog-v1.json');
 const ROLES = new Set([
   'product-architect', 'generator-engineer', 'qa-engineer', 'security-engineer',
-  'platform-engineer', 'ux-accessibility', 'documentation-release'
+  'platform-engineer', 'ux-accessibility', 'documentation-release', 'growth-intelligence'
 ]);
 const ROOT_KEYS = new Set([
   'schemaVersion', 'repository', 'authorizedAt', 'authorization', 'limits',

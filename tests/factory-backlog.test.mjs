@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {posix} from 'node:path';
 
 const read = () => JSON.parse(readFileSync(new URL('../docs/catalog/factory-backlog-v1.json', import.meta.url), 'utf8'));
-const roles = new Set(['product-architect','generator-engineer','qa-engineer','security-engineer','platform-engineer','ux-accessibility','documentation-release']);
+const roles = new Set(['product-architect','generator-engineer','qa-engineer','security-engineer','platform-engineer','ux-accessibility','documentation-release','growth-intelligence']);
 function assertScope(file) {
   assert.ok(!file.startsWith('/') && !file.includes('..') && !file.includes('\\'));
   assert.match(file, /^[A-Za-z0-9._/-]+$/);
@@ -123,4 +123,15 @@ test('growth missions are present with isolated file scopes and complete depende
  for(const n of [64,65,66,70]) {
   assert.ok(all.get(71).dependsOn.some(x=>x.kind==='issue'&&x.number===n));
  }
+});
+
+
+test('Growth Intelligence is priority P1 but keeps dependency gates unchanged',()=>{
+ const tasks=new Map(read().tasks.map(t=>[t.issue,t]));
+ assert.equal(tasks.get(41).priority,'p1');
+ assert.equal(tasks.get(71).priority,'p1');
+ assert.equal(tasks.get(71).role,'growth-intelligence');
+ assert.deepEqual(tasks.get(71).dependsOn.map(d=>d.number),[17,64,65,66,70]);
+ assert.equal(tasks.get(71).automationAuthorized,true);
+ assert.deepEqual(tasks.get(71).files,['growth/autonomous/','tests/growth-autonomous.test.mjs','docs/growth/autonomous.md']);
 });
