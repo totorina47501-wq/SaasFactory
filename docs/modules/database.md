@@ -14,7 +14,8 @@ propre schéma PostgreSQL, son pool et son cycle de vie.
 Les migrations immuables sont dans `modules/database/migrations/` et suivent
 `NNNN_<slug>.sql`. La version 1 crée les organisations, utilisateurs,
 appartenances et événements d'audit ; la version 2 ajoute le stockage local,
-l'espace de données namespacé des modules et les règles RLS. Les tables
+l'espace de données namespacé des modules et les règles RLS ; la version 3
+protège les événements d'audit contre `TRUNCATE`. Les tables
 d'appartenance ont des clés étrangères et une clé primaire composite. Les
 emails sont uniques sans distinction de casse dans un schéma. Les événements
 d'audit sont append-only. Le journal de migration stocke version, identifiant
@@ -81,7 +82,8 @@ Utilisez un mot de passe jetable pour cette base locale :
 ```sh
 export POSTGRES_PASSWORD=local-test-only
 docker compose -f modules/database/compose.yaml up -d --wait
-DATABASE_URL="postgres://factory_test:${POSTGRES_PASSWORD}@127.0.0.1:55432/factory_test" \
+DATABASE_URL="postgres://factory_test@127.0.0.1:55432/factory_test" \
+PGPASSWORD="$POSTGRES_PASSWORD" \
   node --test tests/database.test.mjs
 docker compose -f modules/database/compose.yaml down -v
 unset POSTGRES_PASSWORD

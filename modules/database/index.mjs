@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const migrationFiles = [
   { version: 1, id: '0001_identity_audit', url: new URL('./migrations/0001_identity_audit.sql', import.meta.url) },
   { version: 2, id: '0002_tenant_storage', url: new URL('./migrations/0002_tenant_storage.sql', import.meta.url) },
+  { version: 3, id: '0003_audit_truncate_guard', url: new URL('./migrations/0003_audit_truncate_guard.sql', import.meta.url) },
 ];
 const coreMigrations = migrationFiles.map(({ version, id, url }) => Object.freeze({
   version,
@@ -221,10 +222,15 @@ export async function runMigrations(pool, schemaName, options = {}) {
         'INSERT INTO schema_migrations (version, id, checksum) VALUES ($1, $2, $3)',
         [migration.version, migration.id, checksum],
       );
+      applied.set(migration.version, {
+        version: migration.version,
+        id: migration.id,
+        checksum,
+      });
     }
     await client.query('COMMIT');
     return Object.freeze(migrations
-      .filter(migration => migration.version <= targetVersion)
+      .filter(migration => applied.has(migration.version))
       .map(migration => Object.freeze({ version: migration.version, id: migration.id })));
   } catch (error) {
     if (transactionStarted) {
