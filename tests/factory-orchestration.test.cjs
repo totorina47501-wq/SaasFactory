@@ -882,3 +882,95 @@ test('recovery attempts stop at two for one PR/SHA', () => {
   assert.equal(orchestration.retryAllowed(-1), false);
   assert.equal(orchestration.retryAllowed(1.5), false);
 });
+
+
+function completedAgentRun(state, overrides = {}) {
+  return {
+    id: 200, name: 'Running Copilot cloud agent', event: 'dynamic',
+    head_branch: state.pr.head.ref, head_sha: '1'.repeat(40),
+    repository: {full_name: orchestration.REPOSITORY},
+    head_repository: {full_name: orchestration.REPOSITORY},
+    actor: {login: 'Copilot'},
+    status: 'completed', conclusion: 'success',
+    created_at: '2026-11-09T11:00:00Z',
+    pull_requests: [{number: state.pr.number, head: {sha: state.pr.head.sha}}],
+    ...overrides
+  };
+}
+function copilotHandoffMocks(options = {}) {
+  const state = mergeMocks(options);
+  state.pr.draft = true;
+  const runs = options.agentRuns ?? [completedAgentRun(state)];
+  state.github.rest.actions.listWorkflowRunsForRepo = async () =>
+    ({data: {workflow_runs: runs}});
+  return state;
+}
+function handoffArgs(state) {
+  return {
+    github: state.github, owner: 'totorina47501-wq', repo: 'SaasFactory',
+    pr: state.pr, task: state.task, issue: state.linkedIssue,
+    workflow: state.workflow, mainSha
+  };
+}
+test('a completed authenticated Copilot session can refresh only its scoped stale branch', async () => {
+  const state = copilotHandoffMocks();
+  state.pr.base.sha = 'c'.repeat(40);
+  const originalGet = state.github.rest.pulls.get;
+  state.github.rest.pulls.get = async (...args) => {
+    const result = await originalGet(...args);
+    result.data.base.sha = state.pr.base.sha;
+    return result;
+  };
+  const updates = [];
+  state.github.rest.pulls.updateBranch = async args => {
+    updates.push(args);
+    return {status: 202};
+  };
+  assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(state)), 'branch-updated');
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].pull_number, state.pr.number);
+  assert.equal(updates[0].expected_head_sha, headSha);
+});
+test('unfinished, foreign or stale agent sessions never release a draft or refresh branch', async () => {
+  for (const agentRuns of [
+    [],
+    [{...completedAgentRun(copilotHandoffMocks()), status: 'in_progress', conclusion: null}],
+    [{...completedAgentRun(copilotHandoffMocks()), actor: {login: 'someone-else'}}],
+    [{...completedAgentRun(copilotHandoffMocks()), pull_requests: [{number: 99, head: {sha: headSha}}]}],
+    [{...completedAgentRun(copilotHandoffMocks()), pull_requests: [{number: 45, head: {sha: 'f'.repeat(40)}}]}]
+  ]) {
+    const state = copilotHandoffMocks({agentRuns});
+    state.pr.base.sha = 'c'.repeat(40);
+    assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(state)), null);
+  }
+});
+test('a verified free CI can automatically release a completed Copilot draft without a paid review', async () => {
+  const state = copilotHandoffMocks({review: false});
+  const original = state.github.graphql;
+  const mutations = [];
+  state.github.graphql = async (query, args) => {
+    if (query.startsWith('mutation(')) {
+      mutations.push(args);
+      return {markPullRequestReadyForReview: {pullRequest: {
+        id: 'PR_ABC', isDraft: false, headRefOid: headSha
+      }}};
+    }
+    const response = await original(query,args);
+    if (query.includes('id isDraft headRefOid')) {
+      response.repository.pullRequest.id = 'PR_ABC';
+      response.repository.pullRequest.isDraft = true;
+    }
+    return response;
+  };
+  assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(state)), 'ready-for-review');
+  assert.equal(mutations.length, 1);
+  assert.equal(mutations[0].id, 'PR_ABC');
+});
+test('draft handoff refuses CI failures, missing free-review jobs and out-of-scope files', async () => {
+  const failedCi = copilotHandoffMocks({ciWorkflowId: 99});
+  assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(failedCi)), null);
+  const missingFreeJob = copilotHandoffMocks({freeReviewJobs: []});
+  assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(missingFreeJob)), null);
+  const outOfScope = copilotHandoffMocks({changedFiles: ['README.md']});
+  assert.equal(await orchestration.prepareCompletedCopilotPullRequest(handoffArgs(outOfScope)), null);
+});
