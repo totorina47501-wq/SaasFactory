@@ -16,14 +16,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Generate offline LCOV coverage
+      - name: Generate offline LCOV coverage for all Factory suites
         run: |
           mkdir -p coverage
           node --experimental-test-coverage --test \
             --test-reporter=spec --test-reporter=lcov \
             --test-reporter-destination=stdout \
-            --test-reporter-destination=coverage/lcov.info \
-            tests/generator.test.mjs tests/agent-dispatch.test.cjs
+            --test-reporter-destination=coverage/lcov.info
           test -s coverage/lcov.info
       - uses: actions/upload-artifact@v4
         with:
