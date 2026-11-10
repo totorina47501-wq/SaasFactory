@@ -10,7 +10,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir, totalmem } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
@@ -333,11 +333,14 @@ test('backs up and restores the complete synthetic local app, rotated logs, pend
   t.diagnostic(JSON.stringify({
     node: process.version,
     platform: `${process.platform}/${process.arch}`,
+    availableParallelism: availableParallelism(),
+    totalMemoryBytes: totalmem(),
     syntheticAppBytes: (await readFile(path.join(bundle, 'database', 'backup.pgdump'))).byteLength +
       (await readFile(path.join(bundle, 'app', 'jobs', 'jobs-v1.json'))).byteLength +
       (await readFile(path.join(bundle, 'app', 'index', 'index-v1.json'))).byteLength,
     elapsedMs: Number(process.hrtime.bigint() - started) / 1e6,
     rssDeltaBytes: process.memoryUsage().rss - initialRss,
+    rssBytes: process.memoryUsage().rss,
     retainedAuditSegments: retainedLogCount,
     restoredJobs: 1,
     restoredIndexResults: results.results.length,
