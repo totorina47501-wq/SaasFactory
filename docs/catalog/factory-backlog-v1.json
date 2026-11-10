@@ -1402,6 +1402,9 @@
         "Contrat de validation de marché fondé sur les sources avec incertitudes et hypothèses",
         "Tests offline du schéma, non-invention des preuves, API et fixture app générée",
         "Intégration Intake et documentation des limites sans fournisseurs activés"
+      ],
+      "externalIssueHolds": [
+        59
       ]
     },
     {
@@ -1438,6 +1441,9 @@
         "Playbooks de lancement réutilisables depuis manifeste et pages SEO FR/EN",
         "Tous les contenus et campagnes restent des brouillons sans diffusion, avec contrôle des affirmations",
         "Tests offline de consentement, idempotence, exports et intégration app générée"
+      ],
+      "externalIssueHolds": [
+        59
       ]
     },
     {
@@ -1474,6 +1480,9 @@
         "Attribution locale bornée et explicable, mesures first-touch et last-touch",
         "Isolation tenant, suppression RGPD, déduplication et refus du tracking sans consentement",
         "Tests de calcul exact, événements tardifs, simulations et exports app générée"
+      ],
+      "externalIssueHolds": [
+        59
       ]
     },
     {

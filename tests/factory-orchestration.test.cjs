@@ -983,3 +983,58 @@ test('draft handoff exposes a safe skip reason when completed Copilot session is
   }), null);
   assert.deepEqual(reasons, ['copilot-session-unverified']);
 });
+
+
+test('external growth hold #59 is explicit, versioned and cannot be silently dropped', () => {
+  const c = catalog();
+  for (const id of [64, 65, 66]) {
+    const task = c.tasks.find(t => t.issue === id);
+    assert.deepEqual(task.externalIssueHolds, [59]);
+  }
+  assert.doesNotThrow(() => orchestration.validateCatalog(c));
+  const invalid = catalog();
+  delete invalid.tasks.find(t => t.issue === 64).externalIssueHolds;
+  assert.throws(() => orchestration.validateCatalog(invalid), /Growth mission requires external proof/);
+});
+
+test('open, prematurely closed or unproven #59 blocks growth even if internal dependencies are green', async () => {
+  const task = { issue: 64, dependsOn: [], externalIssueHolds: [59] };
+  const base = { number: 59, state: 'open', state_reason: null, body: '', labels: [] };
+  const args = { owner: 'totorina47501-wq', repo: 'SaasFactory', task, tasks: new Map(), allPrs: [] };
+  const open = orchestrationGithub({ issues: [base] });
+  assert.equal(await orchestration.dependenciesReady({
+    ...args, github: open.github, issuesByNumber: new Map([[59, base]])
+  }), false);
+  const prematurelyClosed = { ...base, state: 'closed', state_reason: 'not_planned' };
+  const closed = orchestrationGithub({ issues: [prematurelyClosed] });
+  assert.equal(await orchestration.dependenciesReady({
+    ...args, github: closed.github, issuesByNumber: new Map([[59, prematurelyClosed]])
+  }), false);
+  const completed = { ...base, state: 'closed', state_reason: 'completed' };
+  const unproven = orchestrationGithub({ issues: [completed] });
+  assert.equal(await orchestration.dependenciesReady({
+    ...args, github: unproven.github, issuesByNumber: new Map([[59, completed]])
+  }), false);
+});
+
+test('growth external hold is released only by exact merged PR closing evidence for #59', async () => {
+  const task = { issue: 64, dependsOn: [], externalIssueHolds: [59] };
+  const completed = { number: 59, state: 'closed', state_reason: 'completed', body: '', labels: [] };
+  const proof = { number: 222, body: 'Fixes #59' };
+  const { github } = orchestrationGithub({
+    issues: [completed], allPrs: [proof], dependencyMerged: {222: true}
+  });
+  const args = {
+    github, owner: 'totorina47501-wq', repo: 'SaasFactory', task,
+    tasks: new Map(), issuesByNumber: new Map([[59, completed]]),
+    allPrs: [proof],
+  };
+  assert.equal(await orchestration.dependenciesReady(args), true);
+  github.graphql = async () => ({
+    repository: {pullRequest: {number:222,merged:true,closingIssuesReferences:{
+      nodes:[{number:42,repository:{nameWithOwner:orchestration.REPOSITORY}}],
+      pageInfo:{hasNextPage:false}
+    }}}
+  });
+  assert.equal(await orchestration.dependenciesReady(args), false);
+});

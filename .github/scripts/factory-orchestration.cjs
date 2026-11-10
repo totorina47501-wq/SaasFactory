@@ -15,7 +15,7 @@ const ROOT_KEYS = new Set([
 ]);
 const TASK_KEYS = new Set([
   'key', 'issue', 'title', 'role', 'priority', 'automationAuthorized',
-  'files', 'dependsOn', 'acceptance'
+  'files', 'dependsOn', 'acceptance', 'externalIssueHolds'
 ]);
 const DEPENDENCY_KEYS = new Set(['kind', 'number', 'acceptance']);
 const BOT_REVIEWERS = new Set(['copilot-pull-request-reviewer[bot]']);
@@ -88,6 +88,17 @@ function validateCatalog(catalog) {
     assert(Array.isArray(task.dependsOn), 'Task dependencies must be an array');
     assertScope(task.files);
     assert(task.acceptance?.length >= 1, 'Task acceptance evidence is missing');
+    if (task.externalIssueHolds !== undefined) {
+      assert(Array.isArray(task.externalIssueHolds) && task.externalIssueHolds.length > 0 &&
+        task.externalIssueHolds.length <= 5 &&
+        task.externalIssueHolds.every(n => Number.isSafeInteger(n) && n > 0) &&
+        new Set(task.externalIssueHolds).size === task.externalIssueHolds.length,
+      'Invalid external issue holds');
+    }
+    if ([64, 65, 66].includes(task.issue)) {
+      assert(JSON.stringify(task.externalIssueHolds) === '[59]',
+        'Growth mission requires external proof #59 before dispatch');
+    }
     assert(!tasks.has(task.issue), 'Duplicate catalog issue number');
     tasks.set(task.issue, task);
     for (const dependency of task.dependsOn) {
@@ -100,6 +111,10 @@ function validateCatalog(catalog) {
           dependency.acceptance.trim().length > 0, 'Invalid catalog acceptance proof');
       }
     }
+  }
+
+  for (const task of tasks.values()) for (const held of task.externalIssueHolds || []) {
+    assert(!tasks.has(held), 'External hold must not be an internal catalog dependency');
   }
 
   for (const work of catalog.existingWork) {
@@ -313,7 +328,37 @@ async function dependenciesReady({
   stack.add(task.issue);
   let ready = true;
   try {
-    for (const dependency of task.dependsOn) {
+    // External policy hold is separate from the 45-task dependency DAG.
+    // A closed issue alone is not evidence of delivered code: require its
+    // sole canonical closing reference to a verified merged PR.
+    for (const number of task.externalIssueHolds || []) {
+      const hold = issuesByNumber.get(number);
+      if (!hold || hold.state !== 'closed' || hold.state_reason !== 'completed') {
+        ready = false;
+        break;
+      }
+      const linked = allPrs.filter(pr => linkedIssueNumbers(pr.body || '').includes(number));
+      let delivered = false;
+      for (const pr of linked) {
+        const prKey = 'external-pr:' + pr.number;
+        if (!cache.has(prKey)) {
+          const detail = await github.rest.pulls.get({owner, repo, pull_number: pr.number});
+          cache.set(prKey, detail.data);
+        }
+        const merged = cache.get(prKey);
+        const refs = linkedIssueNumbers(merged.body || '');
+        if (merged.merged === true && refs.length === 1 && refs[0] === number &&
+            await mergedMissionProof(github, owner, repo, pr.number, number)) {
+          delivered = true;
+          break;
+        }
+      }
+      if (!delivered) {
+        ready = false;
+        break;
+      }
+    }
+    if (ready) for (const dependency of task.dependsOn) {
       if (dependency.kind === 'pull_request') {
         const key = `pr:${dependency.number}`;
         if (!cache.has(key)) {
