@@ -139,6 +139,11 @@ test('persists sessions per tenant and returns only the current tenant session',
     promptVersion: '1.0.0',
   }))) {}
   assert.equal(calls.answers.length, 1);
+  await expectCode(collect(service.streamMessage(request({
+    sessionId: sessionA.id,
+    question: 'A different question',
+    promptVersion: '1.0.0',
+  }))), 'IDEMPOTENCY_CONFLICT');
   assert.equal((await service.getSession(request({ sessionId: sessionA.id }))).messages.length, 2);
   assert.equal((await service.getSession(request({
     tenantId: TENANT_B,
@@ -207,6 +212,26 @@ test('redacts stored answers when their sources are no longer available', async 
   assert.deepEqual(sessionAfterRevocation.messages[1].citations, []);
 });
 
+test('revalidates persisted citations before emitting the completed message', async () => {
+  const { service, store, retrieval } = harness();
+  const session = await createSession(service);
+  const put = store.put.bind(store);
+  store.put = async (...args) => {
+    const version = await put(...args);
+    retrieval.results = [];
+    return version;
+  };
+  const events = [];
+  for await (const event of service.streamMessage(request({
+    sessionId: session.id,
+    question: 'A supported question',
+    promptVersion: '1.0.0',
+  }))) events.push(event);
+
+  assert.equal(events.at(-1).message.redacted, true);
+  assert.equal(events.at(-1).message.content, 'Cette réponse n’est plus disponible, car une source ou un droit d’accès a changé.');
+});
+
 test('renders model and document content as escaped text with accessible controls', () => {
   const html = renderChatInterface({
     enabled: true,
@@ -214,6 +239,7 @@ test('renders model and document content as escaped text with accessible control
       id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       messages: [
         { id: '1', role: 'assistant', content: '<img src=x onerror=alert(1)> [open](javascript:alert(1))', citations: [{ sourceId: '<script>doc</script>', fileName: 'guide<&>.txt' }] },
+        { id: '2', role: 'assistant', content: '', citations: [], abstain: true },
       ],
     },
     actionUrl: '/chat/send',
@@ -223,6 +249,7 @@ test('renders model and document content as escaped text with accessible control
   assert.match(html, /for="chat-question"/u);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/u);
   assert.match(html, /&lt;script&gt;doc&lt;\/script&gt;/u);
+  assert.match(html, /Je ne peux pas répondre à partir des sources accessibles\./u);
   assert.doesNotMatch(html, /<img|<script>|href="javascript:/iu);
 });
 

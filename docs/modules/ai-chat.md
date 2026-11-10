@@ -73,6 +73,10 @@ un contexte tenant différent bloque l’opération avant l’accès au stockage
   `status: "generating"` puis `message`; une reprise idempotente émet
   `status: "replaying"` puis le message déjà enregistré.
 
+Une réutilisation du même `requestId` dans une session ne rejoue une réponse que
+si la question et la version de prompt correspondent exactement ; sinon le
+service refuse avec `IDEMPOTENCY_CONFLICT`.
+
 Le LLM local v1 diffuse en interne ses fragments de génération. Le chat ne
 publie toutefois qu’une réponse finale après validation du schéma et des
 citations ; aucun fragment JSON ou résultat incomplet n’est envoyé au client.
@@ -81,12 +85,13 @@ reçoit la question courante, pas l’historique comme contexte de génération 
 l’historique est conservé et affiché par session, mais un contexte multi-tours
 nécessiterait une évolution versionnée du contrat LLM.
 
-Les appels `getSession` et les reprises idempotentes revalident chaque citation
-avec la recherche RAG courante, le cookie courant et la question d’origine. Si
-une source a été supprimée, réindexée ou n’est plus autorisée, la réponse entière
-est remplacée par un avis de retrait et ses citations sont retirées. Une panne
-RAG échoue fermé. Cette vérification conservatrice peut aussi retirer une
-réponse si une source autorisée ne figure plus dans les résultats courants.
+Avant l’enregistrement puis l’émission, ainsi que lors de `getSession` et des
+reprises idempotentes, chaque citation est revalidée avec la recherche RAG
+courante, le cookie courant et la question d’origine. Si une source a été
+supprimée, réindexée ou n’est plus autorisée, la réponse entière est remplacée
+par un avis de retrait et ses citations sont retirées. Une panne RAG échoue
+fermé. Cette vérification conservatrice peut aussi retirer une réponse si une
+source autorisée ne figure plus dans les résultats courants.
 
 ## Stockage et budgets
 
@@ -120,10 +125,11 @@ n’accepte qu’une URL locale. Les messages, noms de source et fichiers sont
 échappés en texte : aucun Markdown ni HTML de modèle ou de document n’est
 interprété et les citations n’exposent pas de lien arbitraire. Les consommateurs
 de `retrieve` doivent également rendre le texte retourné comme texte, jamais
-comme HTML.
+comme HTML. Une réponse d’abstention est affichée avec un avis explicite, sans
+fabriquer de réponse ni de source.
 
 Codes d’erreur stables : `DISABLED`, `ENGINE_TIMEOUT`, `GENERATION_FAILED`,
-`INPUT_LIMIT`, `INVALID_CONFIGURATION`, `INVALID_INPUT`, `INVALID_RESPONSE`,
+`IDEMPOTENCY_CONFLICT`, `INPUT_LIMIT`, `INVALID_CONFIGURATION`, `INVALID_INPUT`, `INVALID_RESPONSE`,
 `PROMPT_NOT_FOUND`, `SESSION_LIMIT`, `SESSION_NOT_FOUND`,
 `SOURCE_UNAVAILABLE`, `STORAGE_BUSY`, `STORAGE_LIMIT`,
 `STORAGE_UNAVAILABLE`, `TENANT_ACCESS_DENIED`, `TURN_LIMIT`, `UNAVAILABLE` et

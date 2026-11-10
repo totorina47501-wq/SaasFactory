@@ -499,6 +499,9 @@ export function createAiChatService(options) {
         const saved = savedSession.messages.find(message =>
           message.role === 'assistant' && message.requestId === input.requestId);
         if (!saved) fail('CORRUPT_SESSION');
+        if (existing.content !== question || saved.promptVersion !== input.promptVersion) {
+          fail('IDEMPOTENCY_CONFLICT');
+        }
         yield Object.freeze({ contractVersion: CONTRACT_VERSION, type: 'status', status: 'replaying' });
         yield Object.freeze({ contractVersion: CONTRACT_VERSION, type: 'message', message: saved });
         return;
@@ -563,7 +566,7 @@ export function createAiChatService(options) {
         abstain: result.abstain,
       };
       if (input.signal?.aborted) fail('INTERRUPTED');
-      const committed = await mutate(context, state => {
+      await mutate(context, state => {
         const current = state.sessions.find(item => item.id === input.sessionId);
         if (!current) fail('SESSION_NOT_FOUND');
         const duplicate = current.messages.find(message =>
@@ -572,6 +575,9 @@ export function createAiChatService(options) {
           const previous = current.messages.find(message =>
             message.role === 'assistant' && message.requestId === input.requestId);
           if (!previous) fail('CORRUPT_SESSION');
+          if (duplicate.content !== question || previous.promptVersion !== input.promptVersion) {
+            fail('IDEMPOTENCY_CONFLICT');
+          }
           return { skipWrite: true, value: previous };
         }
         if (current.messages.length >= limits.maxTurnsPerSession * 2) fail('TURN_LIMIT');
@@ -580,10 +586,20 @@ export function createAiChatService(options) {
         current.updatedAt = timestamp;
         return assistantMessage;
       });
+      const persisted = await readState(context);
+      const persistedSession = persisted.state.sessions.find(item => item.id === input.sessionId);
+      if (!persistedSession) fail('SESSION_NOT_FOUND');
+      const visibleSession = await sessionWithCurrentSources(persistedSession, input);
+      const visibleMessage = visibleSession.messages.find(message =>
+        message.role === 'assistant' && message.requestId === input.requestId);
+      if (!visibleMessage) fail('CORRUPT_SESSION');
       yield Object.freeze({
         contractVersion: CONTRACT_VERSION,
         type: 'message',
-        message: Object.freeze({ ...committed, citations: Object.freeze([...committed.citations]) }),
+        message: Object.freeze({
+          ...visibleMessage,
+          citations: Object.freeze([...visibleMessage.citations]),
+        }),
       });
     },
   });
@@ -599,12 +615,13 @@ export function renderChatInterface(rawInput) {
   if (typeof session.id !== 'string' || !UUID.test(session.id) ||
       !Array.isArray(session.messages) || session.messages.length > 200) fail('INVALID_INPUT');
   const messages = session.messages.map(raw => {
-    const message = exactObject(raw, ['id', 'role', 'content', 'citations', 'redacted'],
+    const message = exactObject(raw, ['id', 'role', 'content', 'citations', 'redacted', 'abstain'],
       ['id', 'role', 'content', 'citations']);
     if (typeof message.id !== 'string' || message.id.length > 128 ||
         !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string' ||
         !message.content.isWellFormed() || message.content.length > 10_000 ||
-        !Array.isArray(message.citations) || message.citations.length > 20) fail('INVALID_INPUT');
+        !Array.isArray(message.citations) || message.citations.length > 20 ||
+        message.abstain !== undefined && typeof message.abstain !== 'boolean') fail('INVALID_INPUT');
     const citations = message.citations.map(rawCitation => {
       const citation = exactObject(rawCitation, [...CITATION_FIELDS, 'metadata'], ['sourceId', 'fileName']);
       if (typeof citation.sourceId !== 'string' || typeof citation.fileName !== 'string') {
@@ -612,7 +629,10 @@ export function renderChatInterface(rawInput) {
       }
       return `<li>${html(citation.sourceId)} — ${html(citation.fileName)}</li>`;
     }).join('');
-    return `<li class="ai-chat-message ai-chat-message-${message.role}"><h2>${message.role === 'user' ? 'Vous' : 'Assistant'}</h2><p>${html(message.content)}</p>${citations ? `<ul aria-label="Sources citées">${citations}</ul>` : ''}</li>`;
+    const content = message.role === 'assistant' && message.abstain && !message.content
+      ? 'Je ne peux pas répondre à partir des sources accessibles.'
+      : message.content;
+    return `<li class="ai-chat-message ai-chat-message-${message.role}"><h2>${message.role === 'user' ? 'Vous' : 'Assistant'}</h2><p>${html(content)}</p>${citations ? `<ul aria-label="Sources citées">${citations}</ul>` : ''}</li>`;
   }).join('');
   const status = input.status === undefined ? '' : `<p role="status" aria-live="polite">${html(text(input.status, 300, { allowEmpty: true }))}</p>`;
   const disabled = input.enabled ? '' : ' disabled';
@@ -631,7 +651,7 @@ export const aiChatContract = Object.freeze({
   streamEvents: Object.freeze(['status', 'message']),
   errors: Object.freeze([
     'CORRUPT_SESSION', 'DISABLED', 'ENGINE_TIMEOUT', 'GENERATION_FAILED', 'INPUT_LIMIT', 'INVALID_CONFIGURATION',
-    'INVALID_INPUT', 'INVALID_RESPONSE', 'PROMPT_NOT_FOUND', 'SESSION_LIMIT', 'SESSION_NOT_FOUND',
+    'IDEMPOTENCY_CONFLICT', 'INVALID_INPUT', 'INVALID_RESPONSE', 'PROMPT_NOT_FOUND', 'SESSION_LIMIT', 'SESSION_NOT_FOUND',
     'SOURCE_UNAVAILABLE', 'STORAGE_BUSY', 'STORAGE_LIMIT', 'STORAGE_UNAVAILABLE', 'TENANT_ACCESS_DENIED',
     'TURN_LIMIT', 'UNAVAILABLE',
   ]),
