@@ -1,88 +1,71 @@
 # Audit de finalisation SaaSFactory
 
-Date : 2026-11-06. État inspecté : `main` à `08251651ac809ed4e19738ab2d05f8601f7e0e38` et PR [#14](https://github.com/totorina47501-wq/SaasFactory/pull/14) à `b14fe31655621c5dc6c2b200d4199fe7d7be2e6e`. Ce rapport est un état initial, pas une déclaration de finalisation V3.
+**Mise à jour :** 2026-11-10
+**Code audité :** SHA `d33cd2bb47e80208dbf31bb43b5300747af51a3f` (commit d'intégration PR #150 ; les changements depuis cette révision sont documentaires).
+**État :** audit documentaire et tests locaux, pas une déclaration de livraison finale, de production ou de déploiement.
 
-## Méthode et limites
+## Méthode et règle de maturité
 
-Le workspace initial était vide. Le clonage Git a échoué : proxy HTTP inaccessible. Les 49 fichiers de l'arbre Git de la PR #14 ont été récupérés via le connecteur GitHub à SHA fixe, sans importer Project3. Cette copie de travail ne contient pas d'historique Git. Les branches, issues ouvertes, PR ouvertes, derniers runs, revues et fils de revue #14 ont été consultés via GitHub.
+Le relevé s'appuie sur le contenu local du dépôt, les contrats et les tests nommés ci-dessous. Le SHA désigne la révision du code examiné. **Aucun résultat GitHub Actions, état courant d'issue/PR, revue, protection de branche ou carte Projects V2 n'a été consulté pour ce SHA dans cette session.** Les statuts CI sont donc « non vérifié », pas « réussi ».
 
-Quatre états exclusivement : **Implémenté et testé**, **Implémenté partiellement**, **Absent**, **Bloqué ou dépendant d'une décision**. Une preuve de test de scaffold ne vaut pas validation d'une capacité métier. Les statuts ci-dessous concernent le périmètre nommé, pas l'ensemble du produit.
+Les catégories de preuve sont distinctes :
 
-## Inventaire vérifiable
+- Les tests unitaires/intégration de modules prouvent seulement les comportements testés, souvent avec fixtures synthétiques ou doubles.
+- Les tests de smoke généré prouvent seulement les fichiers/parcours effectivement générés et exercés. Ils ne valident pas chaque capacité métier.
+- La maturité de registre `verified` est refusée dans cet audit faute de preuve d'une capacité testée dans une application SaaS générée avec des dépendances réelles appropriées. Aucun module n'est promu sur la base de ce rapport ou d'une CI verte seule.
+- Les états `scaffold`, `missing` et `proposed` du catalogue sont des limites/inventaires, pas des capacités disponibles.
 
-| Domaine | État | Fichiers et preuve technique | Écart V3 |
-| --- | --- | --- | --- |
-| Validation générateur v1 | Implémenté et testé | `generate.mjs`, `generate.d.mts`, `tests/generator.test.mjs` ; schéma fermé, `ai-disabled` obligatoire ; CI historique verte citée ci-dessous | Conserver le contrat v1 ; versionner toute nouvelle sélection de modules |
-| Génération indépendante et dry-run | Implémenté et testé | `generate.mjs`, `examples/minimal.json`, `tests/generator.test.mjs` ; manifeste déterministe, refus des destinations existantes, chemins et symlinks contrôlés | Composition extensible et contrats de modules encore absents |
-| Intake v1 | Implémenté partiellement | `intake.mjs`, `tests/intake.test.mjs`, `examples/intake-sample.json` ; validation stricte, priorités, rôles, missions draft, configuration générateur | Pas de résolution de dépendances/incompatibilités, migration, sélection automatique ni contrats exécutables |
-| Master Prompt | Implémenté partiellement | `docs/prompts/chatgpt-saas-intake-v1.md`, `docs/contracts/saas-intake-v1.md` | Produit des demandes planifiées ; ne réalise pas les capacités métier |
-| Détection de secrets intake | Implémenté partiellement | `intake.mjs:string`, tests de jetons synthétiques ; faux positif `task-management-platform` reproduit puis correction locale avec test de régression | Scan heuristique de formats connus, aucune garantie universelle de détection |
-| Catalogue | Implémenté partiellement | `docs/catalog/saas-capabilities-v1.json` : 26 références ; `readyForUse:false` dans les sorties intake | Pas de registre opérationnel versionné avec fichiers, dépendances, rollback et preuves par module |
-| Starter Next.js / TypeScript | Implémenté partiellement | `generate.mjs:renderFiles`, `examples/saas-starter.json`, `tests/saas-launch-readiness.test.mjs` ; CI construit uniquement le minimal | Dashboard, design system complet, parcours utilisateurs absents |
-| Authentification et RBAC | Implémenté partiellement | `generate.mjs` génère `lib/auth.mjs:createAuthBoundary` qui exige une chaîne utilisateur fournie par callback | Ni comptes, hachage, sessions, cookies, CSRF, reset, RBAC, tenants, TOTP ni récupération |
-| PostgreSQL et migrations | Absent | Aucun module DB, migration ou service Compose dans l'arbre ; `postgres-rls` marqué `missing` dans le catalogue | Schéma générique indépendant, isolation, transactions, tests, sauvegarde et restauration à construire |
-| Facturation simulée complète | Implémenté partiellement | `generate.mjs` génère `simulateBillingTest` retournant une référence et un statut simulé | Ni plans, abonnements, essais, quotas, renouvellements, portail, factures ni idempotence |
-| RAG local | Absent | `rag-search` marqué `missing` ; aucun indexeur/retriever dans l'arbre ; génération v1 impose `ai-disabled` | Ingestion, chunks, embeddings locaux, hybride, ACL, citations et cycle documentaire absents |
-| IA locale | Absent | `generate.mjs` génère uniquement `aiEnabled = false` ; `ai-assistant` marqué `missing` | Adaptateurs locaux, streaming, historique et sorties validées absents |
-| Vidéo | Absent | `video-ingest`, `video-extraction` marqués `missing` ; aucune invocation FFmpeg/FFprobe | Upload privé, validation réelle, limites, extraction, jobs et rétention absents |
-| Audio | Absent | Catalogue : extraction/transcription `missing`, sous-titres/TTS/forme d'onde `proposed` | Aucun moteur local, adaptateur déterministe distinct, consentement ni lecteur implémenté |
-| Images et documents | Implémenté partiellement | `generate.mjs` génère seulement `mediaFixture` et un SVG synthétique public | Ce fixture ne fournit ni upload privé, optimisation, OCR, PDF ni sécurité documentaire |
-| Jobs et quotas matériels | Absent | `media-job-queue` marqué `missing` ; aucun worker dans l'arbre | Persistance, retries bornés, annulation, timeout et budgets CPU/RAM absents |
-| Notifications et email local | Absent | `notifications-email` marqué `missing`, aucun service local de boîte de réception | Notifications internes, préférences et templates absents |
-| API générique | Implémenté partiellement | `generate.mjs` génère une route `GET` d'exemple | Pas d'OpenAPI, validation métier, pagination, clés, permissions ou webhooks simulés |
-| UX, i18n et SEO | Implémenté partiellement | `generate.mjs` génère page neutre, CSS, ressources de langue et métadonnées | Pas de parcours FR/EN complet, admin, thème ou vérification clavier/accessibilité |
-| Observabilité et analytics applicatifs | Absent | `audit-logs`, `analytics-events`, `admin-operations` : références uniquement | Health checks, métriques, audit tenant, événements et dashboard absents |
-| Tests Factory | Implémenté et testé | `tests/*.test.mjs`, `tests/*.test.cjs`, `.github/workflows/ci.yml` ; preuves locales et CI distinguées ci-dessous | `npm test` couvre seulement les `.mjs` ; la CI appelle les `.cjs` séparément |
-| Playwright et tests métier générés | Absent | `e2e-playwright` marqué `missing` ; aucun fichier Playwright dans l'arbre | Tests authentifiés, isolation et parcours métier à fournir avec les modules |
-| Sept profils spécialisés | Implémenté et testé | `.github/agents/*.agent.md`, `tests/specialist-agents.test.cjs` ; contrats testés localement | Profils déclarés ne prouvent pas une affectation Copilot réelle |
-| Dispatch et contrôle des conflits | Implémenté et testé | `.github/scripts/agent-dispatch.cjs`, tests locaux ; workflow `*/10`, deux missions actives maximum, une affectation/passage | Vérification de service réel et capacité Copilot non démontrées pendant cet audit |
-| Reprise CI bornée #6 | Absent | Issue [#6](https://github.com/totorina47501-wq/SaasFactory/issues/6) existante et non affectée ; ses trois fichiers autorisés n'existent pas dans l'arbre | Reprendre cette issue sans doublon ; compteur fiable PR/SHA, deux essais, rejet forks/main et API défaillante |
-| Rapport d'exploitation | Implémenté et testé | `.github/scripts/agent-report.cjs`, `tests/agent-report.test.cjs` ; tests API simulée réussis | Ne prouve pas les affectations ni la consommation réelle de crédits |
-| Synchronisation Projects V2 | Bloqué ou dépendant d'une décision | `.github/scripts/projects-v2-sync.cjs`, contrat et tests présents ; mutations conditionnées par variable d'activation | Aucun outil GraphQL Projects disponible dans cette session ; cartes, valeurs et permissions du projet #2 non inspectées en direct |
-| Couverture | Implémenté partiellement | `.github/workflows/factory-quality-integrations.yml`, `.codecov.yml` ; artefact `factory-coverage-42150576480` présent, non expiré | Le workflow mesure seulement générateur et dispatch ; contenu LCOV et pourcentage global non vérifiés |
-| Dépendances et intégrations qualité | Implémenté partiellement | `.github/renovate.json`, `tests/factory-quality-config.test.cjs` ; Codecov conditionnel, automerge désactivé | Aucun service de qualité requis au runtime local ; ne pas activer un fournisseur |
-| Exécution locale complète des tests | Bloqué ou dépendant d'une décision | `npm test` tenté ; sous-processus Node bloqués `EPERM` ; demande de permissions élargies rejetée par revue automatique | Faire exécuter la CI sans secrets sur le SHA corrigé ; ne pas assimiler ce blocage à un défaut fonctionnel |
-| Déploiement et production | Bloqué ou dépendant d'une décision | Cible OpenNext inactive dans `generate.mjs`, `examples/saas-starter.json` ; aucun déploiement réalisé | Préparer les artefacts locaux sans activation ; aucune qualification production-ready |
+## Matrice de preuves par domaine
 
-## PR #14 : décision de revue
+Chaque ligne indique les sources, les tests, le SHA de code visé et l'état CI. « Tests présents » n'affirme pas que chaque test de cette ligne a été relancé individuellement ; les résultats exécutés dans cette session figurent après la matrice.
 
-PR ouverte, non fusionnée, seule PR ouverte observée. Reprendre ses fichiers, sans intake concurrent. Sur le SHA initial audité :
+| Domaine / état constaté | Fichiers de preuve | Tests / portée | SHA du code | CI GitHub |
+| --- | --- | --- | --- | --- |
+| Générateur v1/v2 et intake : implémentés ; génération v1 par manifeste fermé, v2 par allowlist et décisions explicites | `generate.mjs`, `factory/generator-v2.mjs`, `factory/intake-v2.mjs`, contrats v1/v2 | `tests/generator.test.mjs`, `tests/generator-v2.test.mjs`, `tests/intake.test.mjs`, `tests/intake-v2.test.mjs` | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée sur ce SHA. |
+| Registre : 5 modules opérationnels tous `scaffold`; références restantes sans disponibilité implicite | `factory/module-registry.mjs`, `factory/module-resolver.mjs`, `docs/catalog/saas-capabilities-v1.json`, contrats de registre | `tests/module-registry.test.mjs`, `tests/module-resolver.test.mjs`; ces tests valident le registre/résolveur, pas les capacités du catalogue historique | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée sur ce SHA. |
+| Profils/applications générés : smoke de profils et combinaisons limitées ; pas une recette de tous les parcours ou capacités | `generate.mjs`, `examples/minimal.json`, `examples/saas-starter-v2.json`, `.github/workflows/ci.yml`, `docs/testing.md` | `tests/generator-v2.test.mjs`, `tests/saas-launch-readiness.test.mjs`; CI définit tests/typecheck pour deux profils, build/Playwright pour le minimal | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Le workflow est présent ; dernier run final non consulté. |
+| Contrats runtime et maturité : interfaces versionnées ; les contrats ne créent pas un service à eux seuls | `factory/contracts/`, `docs/contracts/factory-runtime-v1.md`, `docs/contracts/module-registry-v1.md`, `docs/contracts/generated-module-v1.md` | `tests/runtime-contracts.test.mjs`; validation des descripteurs/contexte, pas preuve de service produit généré | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée sur ce SHA. |
+| Auth, MFA, tenancy et RBAC : services Factory testés ; génération auth reste une frontière injectée | `modules/auth/`, `modules/mfa/`, `modules/tenancy/`, `docs/catalog/saas-capabilities-v1.json` | `tests/auth.test.mjs`, `tests/mfa.test.mjs`, `tests/tenancy.test.mjs`; les modules de registre restent scaffolds | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée sur ce SHA. |
+| PostgreSQL et opérations DB : implémentation locale, backup/restore avec contrôles d'intégrité ; aucune base distante | `modules/database/`, `modules/database-operations/`, `docs/modules/database-operations.md` | `tests/database.test.mjs`, `tests/database-operations.test.mjs`; les tests unitaires utilisent des outils/archives simulés, l'intégration réelle exige un DB jetable local | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée ; aucune instance PostgreSQL réelle invoquée dans cette session. |
+| Jobs, audit et observabilité : services locaux et bornes documentés | `modules/jobs/`, `modules/observability/`, `docs/operations/resource-budgets.md` | `tests/jobs.test.mjs`, `tests/observability.test.mjs`, `tests/operations/operations.test.mjs`; budgets CPU/RAM jobs indicatifs/cooperatifs, non quotas OS | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée sur ce SHA. |
+| RAG : ingestion, cycle de vie et recherche implémentés/testés en Factory ; pas une qualification LLM réelle | `modules/rag-ingestion/`, `modules/rag-lifecycle/`, `modules/rag-search/`, `docs/modules/` | `tests/rag-ingestion.test.mjs`, `tests/rag-lifecycle.test.mjs`, `tests/rag-search.test.mjs`; recherche/embeddings réels et déploiement multi-tenant restent des validations distinctes | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée sur ce SHA. |
+| LLM local, ASR/TTS : adaptateurs opt-in, versions/empreintes configurées ; aucun poids dans les tests | `modules/llm-local/`, `modules/local-speech/`, `docs/modules/llm-local.md`, `docs/modules/local-speech.md`, `docs/security/local-model-security.md` | `tests/llm-local.test.mjs`, `tests/local-speech.test.mjs`; exécutables factices et modèles synthétiques uniquement, pas de test moteur/poids réel | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée sur ce SHA. |
+| Audio/vidéo/images/documents/média privé : services Factory, limites et fixtures ciblés ; pas de recette de bout en bout générée | `modules/audio/`, `modules/video/`, `modules/images/`, `modules/documents/`, `modules/private-storage/`, `modules/media-ui/` | `tests/audio.test.mjs`, `tests/video.test.mjs`, `tests/images.test.mjs`, `tests/documents.test.mjs`, `tests/private-storage.test.mjs`, `tests/media-ui.test.mjs` | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée sur ce SHA. |
+| API, facturation simulée, entitlements et notifications : services testés avec portée locale/simulée | `modules/api/`, `modules/billing-simulated/`, `modules/entitlements/`, `modules/notifications/` | `tests/api.test.mjs`, `tests/billing-simulated.test.mjs`, `tests/entitlements.test.mjs`, `tests/notifications.test.mjs`; aucun paiement/email distant | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée sur ce SHA. |
+| Confidentialité, analytics, admin, i18n et UX : implémentations Factory testées, couverture ne vaut pas parcours produit complet | `modules/privacy/`, `modules/analytics/`, `modules/admin/`, `modules/i18n-seo/`, `modules/ux/` | `tests/privacy.test.mjs`, `tests/analytics.test.mjs`, `tests/admin.test.mjs`, `tests/i18n-seo.test.mjs`, `tests/ux.test.mjs` | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée sur ce SHA. |
+| Orchestration, intégrations qualité et Projects V2 : politiques/workflows locaux ; aucune preuve de synchronisation réelle du projet | `.github/scripts/`, `.github/workflows/`, `docs/agent-orchestration.md`, `docs/projects-v2-status-sync.md` | `tests/agent-dispatch.test.cjs`, `tests/factory-orchestration.test.cjs`, `tests/projects-v2-sync.test.cjs`, `tests/factory-quality-config.test.cjs` ; API GitHub simulée/offline | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Aucun run récent ni état de carte consulté. |
+| Sécurité : tests adversariaux/contrôles disponibles ; aucun scan exhaustif de secrets ou validation dynamique externe | `docs/security/verification-report.md`, `docs/security/threat-model.md`, `.github/workflows/ci.yml` | `tests/security/adversarial-boundaries.test.mjs`, tests auth/tenancy/stockage/modèles ; tests synthétiques et limites décrites dans le rapport sécurité | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée ; CodeQL checker non exposé dans cet environnement et settings GitHub non consultés. |
+| Déploiement/production : aucun déploiement, service externe ou activation fournisseur dans le périmètre | `modules/local-runtime/`, `docs/modules/local-runtime.md`, `docs/new-saas-launch-readiness.md` | `tests/local-runtime.test.mjs`, `tests/deployment-profiles.test.mjs`; validation locale/configuration, pas déploiement | `d33cd2bb47e80208dbf31bb43b5300747af51a3f` | Non vérifiée ; aucune validation fournisseur/production revendiquée. |
 
-- [CI SaaS Factory réussie](https://github.com/totorina47501-wq/SaasFactory/actions/runs/42150576589).
-- [Qualité optionnelle réussie](https://github.com/totorina47501-wq/SaasFactory/actions/runs/42150576480), artefact LCOV identifié ; aucun pourcentage inventé.
-- [Exécution de revue Copilot réussie](https://github.com/totorina47501-wq/SaasFactory/actions/runs/42150683290) : succès du job ne signifie pas approbation. La dernière revue recommande une correction.
-- Deux anciens fils résolus ; fil `discussion_r4488426129` ouvert sur le faux positif `sk-`. Correction locale minimale : frontière de jeton avant ce préfixe ; régression sur slug ordinaire et véritables formats synthétiques `sk-`, `sk-proj-`, `sk-test-`, `sk-live-`.
-- Ne pas fusionner : revue et CI sur tout nouveau SHA restent requises. Aucun merge effectué.
+## Vérification locale de cette révision documentaire
 
-Branches observées : `main`, `feat/saas-intake-contract-v1`, `copilot/rapports-d-exploitation-saas-factory`, `copilot/verify-generated-saas-installs`, `feat/extract-generator-v1`, `feat/factory-quality-integrations-opt-in`, `feat/factory-ten-minute-cadence-launch-readiness`, `feat/projects-v2-auth-check`, `feat/projects-v2-status-sync-no-duplicates`, `feat/saas-factory-agent-orchestrator-v2`, `feat/specialist-copilot-agents`, `fix/projects-v2-sync-boolean-variable`. Leur présence seule ne prouve pas un développement actif.
+Les commandes suivantes ont été exécutées dans le sandbox le 2026-11-10. Le code fonctionnel n'a pas changé depuis le SHA listé dans la matrice ; seuls les documents de cette mission sont modifiés.
 
-## Preuves locales de cette session
-
-- `node intake.mjs --input examples/intake-sample.json` : sortie valide, demandes non prêtes, aucun fournisseur activé.
-- Test de régression ajouté d'abord : échec attendu `product.slug contains credential-like content` pour `task-management-platform`.
-- Après correction : ce test passe ; les formats de clés synthétiques restent refusés.
-- `node --test --test-isolation=none tests/*.test.cjs` : **29/29 réussis** dans le sandbox.
-- Suite intake dans le processus courant : **8/9 réussis**, seul appel CLI enfant bloqué `EPERM`. Le test CLI direct passe séparément ; cela ne remplace pas la suite complète.
-- `npm test` : tentative en échec environnemental, aucune déclaration de suite complète verte. Pas de dépendance installée, aucun modèle téléchargé, aucun accès à Project3, aucune donnée client, aucun déploiement.
-
-## Ordre d'exécution restant et responsabilités proposées
-
-Cette liste est un backlog, pas des missions affectées ou terminées. Avant chaque mission : comparer à nouveau issues/PR et périmètres actifs, rédiger le contrat, publier un périmètre `Files:` exact et utiliser un unique profil. Ne pas déduire une autorisation de dispatch de cette table.
-
-| Priorité | Lot / profil principal | Dépendances et critères de sortie |
+| Commande | Résultat observé | Portée / limite |
 | --- | --- | --- |
-| P0 | Contrats v2 et registre — Product Architect / Generator Engineer | Conserver v1 ; métadonnées de maturité, preuves, migration explicite, résolution des cycles/dépendances/incompatibilités/collisions testée |
-| P0 | PostgreSQL, auth locale, RBAC — Security Engineer | Schéma neutre ; tests sessions, CSRF, permissions et accès inter-tenant avant connexion de modules |
-| P0 | Générateur composable — Generator Engineer | Registre + sécurité des chemins ; rapport déterministe, aucun hook arbitraire, génération indépendante et tests adaptés |
-| P0 | RAG local — Generator Engineer, revue Security Engineer | Identité/ACL et stockage ; fixtures synthétiques, recherche sans LLM, suppression réelle, provenance, accès tenant contrôlé |
-| P1 | Reprises CI — Platform Engineer, issue #6 existante | Contrat approuvé de #6 ; compteur fiable, idempotence et deux essais ; désactivé si déclenchement Copilot non démontré |
-| P1 | Médias, jobs et stockage privé — Platform Engineer / Generator Engineer | ACL + jobs bornés ; FFprobe/FFmpeg avec fichiers synthétiques, limites matérielles, annulation et rétention |
-| P1 | Commerce simulé, notifications et API — Generator Engineer | Identité + persistance ; idempotence, quotas et aucun fournisseur distant |
-| P1 | Starter et accessibilité — UX Accessibility | Modules utilisables ; parcours FR/EN, clavier, dashboard, administration et états d'erreur |
-| P1 | Validation intégrée — QA Engineer | Chaque lot ; tests unitaires/intégration, migrations, Playwright et installation générée indépendante |
-| P2 | IA, ASR, TTS, OCR optionnels — Generator Engineer | Modèles locaux installables explicitement ; licences, empreintes, versions, tailles et besoins CPU/RAM documentés ; tests sans poids |
-| P2 | Exploitation et livraison — Documentation Release / Platform Engineer | Diagnostics, sauvegarde/restauration, modèles d'artefacts de déploiement ; revue sans déploiement |
+| `node --test tests/intake-v2.test.mjs tests/generator-v2.test.mjs tests/saas-launch-readiness.test.mjs tests/operations/operations.test.mjs tests/llm-local.test.mjs tests/local-speech.test.mjs` | 38/38 tests réussis, 0 échec/skip | Ciblé, incluant moteurs/poids simulés et backup/restauration synthétiques. |
+| Parcours documenté `intake.mjs` → extraction de `generatorConfig` → génération dry-run → `--write` dans `/tmp` → `node --test` du smoke généré | Dry-run : 23 fichiers proposés, aucun répertoire de preview écrit ; smoke app : 4/4 réussi | Ne fait ni installation de dépendances, ni typecheck/build d'application générée, ni intégration fournisseur. |
+| `npm test` | 532 réussis, 2 ignorés, 0 échec (534 au total) | Suite locale Node ; pas une preuve GitHub Actions. Node `v22.23.4`. |
+| `node --test tests/*.test.cjs` | 156/156 réussis | Invocation CommonJS séparée aussi utilisée par le workflow ; pas une preuve de run GitHub. |
+| `git diff --check f5a17b6..HEAD` | Réussi sur le diff documentaire final, après cette mise à jour | Vérification de whitespace uniquement. |
+| CI GitHub pour le SHA de tête final | Non consultée | Aucun run ID/URL ou statut CI de cette session ne doit être inféré de tests locaux ou de la configuration de workflow. |
 
-## Conclusion d'audit
+Le test d'opérations a observé un scénario synthétique (`Node v22.23.4`, `linux/x64`, 4 CPU rapportés, 16 760 344 576 octets mémoire rapportés, état synthétique 3 080 octets, environ 340 ms, RSS final 69 275 648 octets). C'est une seule mesure de fixtures simulées, non un benchmark, une capacité garantie ou une restauration de PostgreSQL réelle.
 
-La Factory actuelle est un générateur neutre sûr avec des scaffolds et une orchestration contrôlée. Elle n'est pas encore l'usine SaaS autonome décrite dans la mission V3. Aucun module métier manquant n'est promu à `implemented` ou `verified` par cet audit. Aucun agent n'a été affecté et aucun statut Projects n'a été modifié pendant cette inspection.
+## Réconciliation des issues, PR et Project
+
+Le backlog local attribue SFV3-RELEASE/#56 au profil `documentation-release`, déclare `Files:` et les dépendances #17, #54, #55, #43, #40, #41. Les contrats, composants ou tests associés à ces domaines sont présents localement. Le commit local `d33cd2bb47e80208dbf31bb43b5300747af51a3f` est une intégration PR #150 selon son sujet Git.
+
+Les états GitHub courants des issues, PR liées, checks sur leurs SHA finaux, approbations, discussions et cartes Projects V2 **n'ont pas été consultés** lors de cet audit. La fusion locale de PR #150 ne prouve pas à elle seule l'acceptation d'une dépendance ou la clôture de #55. Vérifier les six dépendances et la mission #56 dans GitHub avant de considérer ce travail livré, fermer un jalon ou modifier le Project. La présence d'un test dans ce dépôt ne prouve pas qu'un élément correspondant est terminé dans le backlog. Le catalogue et `docs/FACTORY-REMAINING-BACKLOG.md` sont une vue de planification versionnée, pas une source live d'état GitHub.
+
+La revue et décision historique de PR #14 sont conservées comme historique dans l'audit initial ; elles ne sont ni réinterprétées ni utilisées pour autoriser une fusion ou contourner une protection.
+
+## Blocages, risques et conclusion
+
+- CI GitHub de la tête finale, revue humaine, dépendances live et statut Projects à vérifier.
+- Le build Next.js du profil généré v2 est explicitement bloqué par le typage de sa route API ; la matrice CI limite le build au minimal et ne doit pas masquer ce blocage.
+- Aucun modèle LLM/ASR/TTS réel, aucune licence de poids/voix révisée dans cette mission, aucun budget CPU/RAM mesuré avec poids réels.
+- Le test backup/restore de cette session utilise des outils simulés. Une qualification PostgreSQL réelle et la restauration dans une application SaaS générée n'ont pas eu lieu.
+- Aucune qualification de production, revue de fournisseur, surveillance distante, opération financière, création de ressource ou déploiement.
+
+La Factory contient des services locaux et des scaffolds testés, mais ces preuves n'établissent pas que le produit est « full-featured », prêt pour la production, ou que la mission V3 et ses dépendances sont livrées. Aucun module n'est promu `verified`. Aucun jalon ne doit être clôturé sur la seule base de ce rapport ou d'une CI verte.
