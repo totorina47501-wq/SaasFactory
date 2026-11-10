@@ -599,6 +599,9 @@ export function createPrivacyService(configuration) {
       const snapshot = await readState(access.tenantContext);
       let operation = snapshot.state.operations[rawInput.operationId];
       if (!operation) fail('OPERATION_NOT_FOUND');
+      if (operation.target.type === 'user' && operation.target.id !== access.userId) {
+        fail('ACCESS_DENIED');
+      }
       if (operation.target.type === 'tenant' &&
           await isAuthorized({
             tenantContext: access.tenantContext,

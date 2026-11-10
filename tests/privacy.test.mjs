@@ -258,6 +258,9 @@ test('erasure persists status, removes vector records, and does not cross tenant
     idempotencyKey: 'erase-my-account',
   }));
   assert.equal(accepted.status, 'queued');
+  await expectCode(service.getOperation(input('user-b', TENANT_A, {
+    operationId: accepted.operationId,
+  })), 'ACCESS_DENIED');
   assert.equal(await service.runOnce(), true);
   const completed = await service.getOperation(input('user-a', TENANT_A, {
     operationId: accepted.operationId,
