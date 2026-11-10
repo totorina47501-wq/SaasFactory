@@ -83,3 +83,86 @@ test('sitemap, robots and draft marketing pages never leak tenant routes',()=>{
  assert.equal(page.links.length,4);
  assert.throws(()=>marketingPage({origin,route:'/login'}),/Private/);
 });
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { generateProject } from '../generate.mjs';
+import { integrateNeutralI18nSeo } from '../modules/i18n-seo/generated-overlay.mjs';
+
+test('localized overlay is dry-run by default and generates accessible independent Next.js routes', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-i18n-'));
+  try {
+    const configText = fs.readFileSync(new URL('../examples/minimal.json', import.meta.url), 'utf8');
+    const app = generateProject({ configText, outputRoot: base, write: true });
+    const source = fs.readFileSync(path.join(app.destination, 'app/page.tsx'), 'utf8');
+    const preview = integrateNeutralI18nSeo({ projectDir: app.destination, origin: 'https://example.org' });
+    assert.equal(preview.status, 'dry-run');
+    assert.equal(preview.publishEnabled, false);
+    assert.match(preview.sha256, /^[a-f0-9]{64}$/);
+    assert.equal(fs.readFileSync(path.join(app.destination, 'app/page.tsx'), 'utf8'), source);
+    const written = integrateNeutralI18nSeo({ projectDir: app.destination, origin: 'https://example.org', write: true });
+    assert.equal(written.sha256, preview.sha256);
+    assert.ok(!fs.existsSync(path.join(app.destination, 'app/layout.tsx')));
+    assert.ok(!fs.existsSync(path.join(app.destination, 'app/page.tsx')));
+    assert.match(fs.readFileSync(path.join(app.destination, 'app/(default)/page.tsx'), 'utf8'), /Welcome/);
+    for (const locale of ['fr-FR', 'en']) {
+      const layout = fs.readFileSync(path.join(app.destination, 'app', locale, 'layout.tsx'), 'utf8');
+      assert.match(layout, new RegExp('html lang="' + locale + '"'));
+      for (const route of ['', '/features', '/pricing', '/about']) {
+        const rendered = fs.readFileSync(path.join(app.destination, 'app', locale, route, 'page.tsx'), 'utf8');
+        assert.match(rendered, /"index": false/);
+        assert.match(rendered, /https:\/\/example.org/);
+        assert.match(rendered, /Choose a language/);
+      }
+    }
+    assert.match(fs.readFileSync(path.join(app.destination, 'app/robots.ts'), 'utf8'), /dashboard/);
+    assert.match(fs.readFileSync(path.join(app.destination, 'app/sitemap.ts'), 'utf8'), /return \[\]/);
+    assert.match(fs.readFileSync(path.join(app.destination, 'tests/smoke.test.mjs'), 'utf8'), /\(default\)/);
+    assert.throws(() => integrateNeutralI18nSeo({ projectDir: app.destination, origin: 'https://example.org', write: true }), /Only untouched|ENOENT/);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('localized overlay refuses unsafe origins and symlinked project root', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-i18n-unsafe-'));
+  try {
+    const configText = fs.readFileSync(new URL('../examples/minimal.json', import.meta.url), 'utf8');
+    const app = generateProject({ configText, outputRoot: base, write: true });
+    assert.throws(() => integrateNeutralI18nSeo({ projectDir: app.destination, origin: 'http://bad.example', write: true }), /HTTPS/);
+    const link = path.join(base, 'symlink-app');
+    fs.symlinkSync(app.destination, link, 'dir');
+    assert.throws(() => integrateNeutralI18nSeo({ projectDir: link, origin: 'https://example.org', write: true }), /Unsafe/);
+    assert.ok(fs.existsSync(path.join(app.destination, 'app/layout.tsx')));
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+
+test('localized overlay rejects auth-capable generated starters even when app pages look neutral', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-i18n-auth-'));
+  try {
+    const config = JSON.parse(fs.readFileSync(new URL('../examples/minimal.json', import.meta.url), 'utf8'));
+    config.projectSlug = 'i18n-auth-check';
+    config.domain = 'i18n-auth-check.example';
+    config.productName = 'i18n auth check';
+    config.modules = ['ai-disabled', 'auth'];
+    const app = generateProject({configText: JSON.stringify(config), outputRoot: root, write: true});
+    assert.throws(() => integrateNeutralI18nSeo({projectDir: app.destination, origin: 'https://example.org', write: true}), /Unexpected starter|Only untouched/);
+    assert.ok(fs.existsSync(path.join(app.destination, 'app/layout.tsx')));
+  } finally { fs.rmSync(root, {recursive:true, force:true}); }
+});
+
+test('localized overlay rejects symlinked nested app directory', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-i18n-link-'));
+  try {
+    const configText = fs.readFileSync(new URL('../examples/minimal.json', import.meta.url), 'utf8');
+    const app = generateProject({ configText, outputRoot: base, write: true });
+    const appFolder = path.join(app.destination, 'app');
+    const moved = path.join(app.destination, 'app-contents');
+    fs.renameSync(appFolder, moved);
+    fs.symlinkSync(moved, appFolder, 'dir');
+    assert.throws(() => integrateNeutralI18nSeo({
+      projectDir: app.destination, origin: 'https://example.org', write: true,
+    }), /Unsafe/);
+    assert.ok(fs.existsSync(path.join(moved, 'layout.tsx')));
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});

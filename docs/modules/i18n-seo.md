@@ -35,3 +35,19 @@ Growth #65 pourra utiliser ce contrat pour des pages neutres, mais reste dépend
 Exécuter node --test tests/i18n-seo.test.mjs puis npm test ; la CI sur SHA exact fait autorité. Les tests couvrent la parité, injection/échappement, négociation locale, pluriels, dates et nombres, préférences sans cookie, whitelists de routes, canonical, sitemap, robots et pages neutres.
 
 L'intégration à l'app générée et les tests E2E (navigation clavier, langue persistée côté interface, métadonnées rendues, exclusion réelle des pages privées) restent à compléter avant clôture #44. Aucun fichier partagé, secret, migration, déploiement ou prestataire. Rollback : retrait de l'import ou revert de la PR.
+
+## Opt-in neutral generated-app localization (10 November 2026)
+
+Module: modules/i18n-seo/generated-overlay.mjs, integrateNeutralI18nSeo({projectDir, origin, write}).
+Preview without writes by default; explicit write:true only into an untouched independent ai-disabled starter.
+Rejects symlinks, an existing Git repository, nonneutral app routes and unsafe HTTP origins.
+Preserves the neutral root route under Next.js (default) route group, moves smoke test import,
+creates eight FR/EN marketing routes with locale-specific root HTML lang, keyboard-native links,
+canonical/hreflang metadata and private-route robots exclusions.
+All generated marketing pages remain DRAFT ONLY and noindex; sitemap is intentionally empty.
+No production publication, provider, payment or authentication enabled.
+
+Tests: node --test tests/i18n-seo.test.mjs then npm test. A real Next.js build, browser E2E
+and final integration into the assembled starter #52 remain additional gates (#53).
+This overlay is opt-in; it is NOT installed by the core generator by default.
+Rollback: regenerate a clean independent project, or revert this module PR.
