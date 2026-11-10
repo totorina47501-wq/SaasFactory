@@ -1,7 +1,7 @@
 # Audit de finalisation SaaSFactory
 
-**Mise à jour :** 2026-11-10  
-**Code audité :** SHA `d33cd2bb47e80208dbf31bb43b5300747af51a3f` (commit d'intégration PR #150 ; les changements depuis cette révision sont documentaires).  
+**Mise à jour :** 2026-11-10
+**Code audité :** SHA `d33cd2bb47e80208dbf31bb43b5300747af51a3f` (commit d'intégration PR #150 ; les changements depuis cette révision sont documentaires).
 **État :** audit documentaire et tests locaux, pas une déclaration de livraison finale, de production ou de déploiement.
 
 ## Méthode et règle de maturité
