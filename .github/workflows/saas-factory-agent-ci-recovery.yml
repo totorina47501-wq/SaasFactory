@@ -1,11 +1,8 @@
 name: SaaS Factory agent CI recovery
 # Trusted main-only bounded AI correction. Never execute or checkout PR code.
+# PAUSED 2026-11-10 by owner. See docs/AGENT-PAUSE-AND-RESUME.md
 on:
-  workflow_run:
-    workflows: ['SaaS Factory CI']
-    types: [completed]
-    branches:
-      - 'copilot/**'
+  workflow_dispatch:
 permissions:
   actions: read
   contents: read
@@ -17,6 +14,7 @@ concurrency:
 jobs:
   recover:
     if: >-
+      false &&
       github.repository == 'totorina47501-wq/SaasFactory' &&
       github.ref == 'refs/heads/main' &&
       github.event.workflow_run.name == 'SaaS Factory CI' &&

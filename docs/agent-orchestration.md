@@ -1,3 +1,5 @@
+> **PAUSE 2026-11-10**: The agent dispatch cron, GitHub Copilot PR/CI wakeups and AI correction workflows described below are **disabled** pending owner reauthorization. See [docs/AGENT-PAUSE-AND-RESUME.md](AGENT-PAUSE-AND-RESUME.md). The historical automation design below is not the active behavior during this hold.
+
 # SaaS Factory agent orchestration V2
 
 - Runs at minutes 00, 10, 20, 30, 40 and 50 **UTC**, contingent on the workflow being merged to `main` and Actions being enabled. GitHub schedule may be delayed or skipped.

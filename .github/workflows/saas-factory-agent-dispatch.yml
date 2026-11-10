@@ -1,10 +1,9 @@
 name: SaaS Factory agent dispatch
 # Full-auto trusted orchestration: scheduled recovery and post-main-CI wakeup.
 # Keep dispatch bounded by the existing coordinator, capacity, and approvals.
+# PAUSED 2026-11-10 by owner. See docs/AGENT-PAUSE-AND-RESUME.md
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '*/10 * * * *'
 permissions:
   contents: read
   issues: read
@@ -16,7 +15,7 @@ concurrency:
 jobs:
   dispatch:
     # Trusted main-only schedule/manual dispatch; no workflow_run from Copilot PRs.
-    if: ${{ github.repository == 'totorina47501-wq/SaasFactory' && github.ref == 'refs/heads/main' }}
+    if: ${{ false && github.repository == 'totorina47501-wq/SaasFactory' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:

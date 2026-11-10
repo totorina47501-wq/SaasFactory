@@ -1,9 +1,8 @@
 name: SaaS Factory trusted Copilot PR ready wake
 # Event-only signal. Runs default-branch workflow; NEVER checkout or execute PR content.
+# PAUSED 2026-11-10 by owner. See docs/AGENT-PAUSE-AND-RESUME.md
 on:
-  pull_request_target:
-    types: [ready_for_review]
-    branches: [main]
+  workflow_dispatch:
 permissions:
   actions: write
   contents: read
@@ -14,6 +13,7 @@ concurrency:
 jobs:
   wake:
     if: >-
+      false &&
       github.repository == 'totorina47501-wq/SaasFactory' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.base.ref == 'main' &&

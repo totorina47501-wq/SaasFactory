@@ -1,11 +1,8 @@
 name: SaaS Factory trusted Copilot PR CI wake
 # GitHub executes this only from the default branch; never check out PR code.
+# PAUSED 2026-11-10 by owner. See docs/AGENT-PAUSE-AND-RESUME.md
 on:
-  workflow_run:
-    workflows: ['SaaS Factory CI']
-    types: [completed]
-    branches:
-      - 'copilot/**'
+  workflow_dispatch:
 permissions:
   actions: write
   contents: read
@@ -16,6 +13,7 @@ concurrency:
 jobs:
   wake:
     if: >-
+      false &&
       github.repository == 'totorina47501-wq/SaasFactory' &&
       github.ref == 'refs/heads/main' &&
       github.event.workflow_run.event == 'pull_request' &&

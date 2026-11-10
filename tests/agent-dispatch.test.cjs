@@ -16,7 +16,7 @@ test('dispatch workflow isolates a user token from checkout and refuses missing 
  assert.doesNotMatch(workflow,/^\s+pull_request(?:_target)?:/m);
  // Current policy uses scheduled/manual dispatch; the paid review trigger stays paused.
  assert.match(workflow,/workflow_dispatch:/);
- assert.ok(workflow.includes("cron: '*/10 * * * *'"));
+ assert.doesNotMatch(workflow,/^  schedule:/m);
  assert.doesNotMatch(workflow,/^\\s+workflow_run:/m);
  assert.match(workflow,/issues: read/);
  assert.match(workflow,/pull-requests: read/);
@@ -177,7 +177,7 @@ test('review signal has no privileged credentials or untrusted checkout',()=>{
 test('privileged dispatcher only runs trusted scheduled or manual events',()=>{
  const workflow=fs.readFileSync(require('node:path').join(__dirname,'../.github/workflows/saas-factory-agent-dispatch.yml'),'utf8');
  assert.match(workflow,/workflow_dispatch:/);
- assert.match(workflow,/cron: '\*\/10 \* \* \* \*'/);
+ assert.doesNotMatch(workflow,/^  schedule:/m);
  assert.doesNotMatch(workflow,/^  workflow_run:/m);
  assert.doesNotMatch(workflow,/Verify trusted review notification job before privileged dispatch/);
  assert.match(workflow,/github\.repository == 'totorina47501-wq\/SaasFactory'/);
@@ -186,7 +186,7 @@ test('privileged dispatcher only runs trusted scheduled or manual events',()=>{
  assert.ok(guard);
  const vm=require('node:vm');
  const check=(ref,repository)=>vm.runInNewContext(guard,{github:{ref,repository}},{timeout:100});
- assert.equal(check('refs/heads/main','totorina47501-wq/SaasFactory'),true);
+ assert.equal(check('refs/heads/main','totorina47501-wq/SaasFactory'),false);
  assert.equal(check('refs/pull/2/merge','totorina47501-wq/SaasFactory'),false);
  assert.equal(check('refs/heads/main','other/repo'),false);
 });
@@ -195,10 +195,12 @@ test('trusted post-main wake dispatches only after the exact green main push CI'
  const path=require('node:path');
  const wake=fs.readFileSync(path.join(__dirname,'../.github/workflows/saas-factory-post-main-ci-wake.yml'),'utf8');
  const ci=fs.readFileSync(path.join(__dirname,'../.github/workflows/ci.yml'),'utf8');
- assert.match(wake,/^  workflow_run:/m);
- assert.match(wake,/workflows: \['SaaS Factory CI'\]/);
- assert.match(wake,/types: \[completed\]/);
- assert.match(wake,/branches: \[main\]/);
+ assert.doesNotMatch(wake,/^  workflow_run:/m);
+ assert.match(wake,/^  workflow_dispatch:/m);
+ assert.match(wake,/\n      false &&\n/);
+ assert.doesNotMatch(wake,/^    workflows:/m);
+ assert.doesNotMatch(wake,/^    types:/m);
+ assert.doesNotMatch(wake,/^    branches:/m);
  assert.match(wake,/github\.event\.workflow_run\.event == 'push'/);
  assert.match(wake,/github\.event\.workflow_run\.conclusion == 'success'/);
  assert.match(wake,/github\.event\.workflow_run\.head_sha == github\.sha/);
@@ -210,7 +212,7 @@ test('trusted post-main wake dispatches only after the exact green main push CI'
  assert.doesNotMatch(wake,/actions\/checkout|COPILOT_DISPATCH_TOKEN/);
  assert.doesNotMatch(ci,/actions: write|COPILOT_DISPATCH_TOKEN/);
  const dispatch=fs.readFileSync(path.join(__dirname,'../.github/workflows/saas-factory-agent-dispatch.yml'),'utf8');
- assert.match(dispatch,/cron: '\*\/10 \* \* \* \*'/);
+ assert.doesNotMatch(dispatch,/^  schedule:/m);
  assert.doesNotMatch(dispatch,/^  workflow_run:/m);
 });
 
@@ -219,10 +221,12 @@ test('successful Copilot PR CI can wake only the verified main-only coordinator'
  const path=require('node:path');
  const wake=fs.readFileSync(path.join(__dirname,'../.github/workflows/saas-factory-copilot-ci-wake.yml'),'utf8');
  const ci=fs.readFileSync(path.join(__dirname,'../.github/workflows/ci.yml'),'utf8');
- assert.match(wake,/^  workflow_run:/m);
- assert.match(wake,/workflows: \['SaaS Factory CI'\]/);
- assert.match(wake,/types: \[completed\]/);
- assert.match(wake,/- 'copilot\/\*\*'/);
+ assert.doesNotMatch(wake,/^  workflow_run:/m);
+ assert.match(wake,/^  workflow_dispatch:/m);
+ assert.match(wake,/\n      false &&\n/);
+ assert.doesNotMatch(wake,/^    workflows:/m);
+ assert.doesNotMatch(wake,/^    types:/m);
+ assert.doesNotMatch(wake,/^      - 'copilot\/\*\*'/m);
  assert.match(wake,/github\.event\.workflow_run\.event == 'pull_request'/);
  assert.match(wake,/github\.event\.workflow_run\.conclusion == 'success'/);
  assert.match(wake,/workflow\.data\.path !== '\.github\/workflows\/ci\.yml'/);
@@ -256,9 +260,11 @@ test('branch refresh never recursively dispatches before GitHub re-runs CI',asyn
 test('trusted PR ready wake can only signal after same-repo Copilot identity and exact green CI',()=>{
  const path=require('node:path');
  const wake=fs.readFileSync(path.join(__dirname,'../.github/workflows/saas-factory-copilot-ready-wake.yml'),'utf8');
- assert.match(wake,/pull_request_target:/);
- assert.match(wake,/types: \[ready_for_review\]/);
- assert.match(wake,/branches: \[main\]/);
+ assert.doesNotMatch(wake,/^  pull_request_target:/m);
+ assert.match(wake,/^  workflow_dispatch:/m);
+ assert.match(wake,/\n      false &&\n/);
+ assert.doesNotMatch(wake,/^    types:/m);
+ assert.doesNotMatch(wake,/^    branches:/m);
  assert.match(wake,/github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
  assert.match(wake,/github\.event\.pull_request\.base\.ref == 'main'/);
  assert.match(wake,/github\.event\.pull_request\.user\.login == 'Copilot'/);
