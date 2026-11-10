@@ -150,3 +150,19 @@ test('localized overlay rejects auth-capable generated starters even when app pa
     assert.ok(fs.existsSync(path.join(app.destination, 'app/layout.tsx')));
   } finally { fs.rmSync(root, {recursive:true, force:true}); }
 });
+
+test('localized overlay rejects symlinked nested app directory', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-i18n-link-'));
+  try {
+    const configText = fs.readFileSync(new URL('../examples/minimal.json', import.meta.url), 'utf8');
+    const app = generateProject({ configText, outputRoot: base, write: true });
+    const appFolder = path.join(app.destination, 'app');
+    const moved = path.join(app.destination, 'app-contents');
+    fs.renameSync(appFolder, moved);
+    fs.symlinkSync(moved, appFolder, 'dir');
+    assert.throws(() => integrateNeutralI18nSeo({
+      projectDir: app.destination, origin: 'https://example.org', write: true,
+    }), /Unsafe/);
+    assert.ok(fs.existsSync(path.join(moved, 'layout.tsx')));
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});

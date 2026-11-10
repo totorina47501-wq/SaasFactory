@@ -15,6 +15,13 @@ function readUntouchedStarter(dir) {
   if (!fs.lstatSync(root).isDirectory() || fs.realpathSync(root) !== root ||
       fs.existsSync(path.join(root, '.git'))) throw Error('Unsafe generated project');
   const appDir = path.join(root, 'app');
+  const testsDir = path.join(root, 'tests');
+  for (const dir of [appDir, testsDir]) {
+    const info = fs.lstatSync(dir);
+    if (!info.isDirectory() || info.isSymbolicLink() || fs.realpathSync(dir) !== dir) {
+      throw Error('Unsafe generated project directory');
+    }
+  }
   const names = fs.readdirSync(appDir);
   if (names.length !== CORE_FILES.length || names.some(name => !CORE_FILES.includes(name))) {
     throw Error('Only untouched neutral ai-disabled starter is supported');
