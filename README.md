@@ -20,6 +20,14 @@ The offline generator tests run the generated smoke tests for every combination 
 
 See [generator contract](docs/generator-contract.md). Security and scope constraints for agents are in [AGENTS.md](AGENTS.md).
 
+## Local release documentation
+
+- [Getting started (Français)](docs/GETTING-STARTED-FR.md) · [English](docs/GETTING-STARTED-EN.md)
+- [Factory completion audit](docs/FACTORY-COMPLETION-AUDIT.md) · [release readiness](docs/FACTORY-RELEASE-READINESS.md)
+- [Local model catalog and limitations](docs/LOCAL-MODEL-CATALOG.md)
+
+The generated project is production-oriented, not production-ready. No model is downloaded by tests, no provider is activated, and no deployment or remote resource is created. Current generated-profile and CI limitations are recorded in [testing documentation](docs/testing.md).
+
 ## Repository policy
 
 This repository holds reusable infrastructure only. Do not copy any application-specific source, branding, user data, migrations, legal corpus or credentials here. Every generated app must live in its own repository. Never enable paid APIs, DNS, payments, migrations or deployments automatically.
