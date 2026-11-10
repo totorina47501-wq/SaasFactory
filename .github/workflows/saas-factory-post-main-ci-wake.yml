@@ -1,10 +1,8 @@
 name: SaaS Factory trusted post-main CI wake
 # Trust boundary: never run privileged automation from a pull-request workflow.
+# PAUSED 2026-11-10 by owner. See docs/AGENT-PAUSE-AND-RESUME.md
 on:
-  workflow_run:
-    workflows: ['SaaS Factory CI']
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
 permissions:
   actions: write
   contents: read
@@ -14,6 +12,7 @@ concurrency:
 jobs:
   wake:
     if: >-
+      false &&
       github.repository == 'totorina47501-wq/SaasFactory' &&
       github.ref == 'refs/heads/main' &&
       github.event.workflow_run.event == 'push' &&

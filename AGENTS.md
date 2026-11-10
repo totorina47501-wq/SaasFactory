@@ -1,3 +1,7 @@
+# Operational hold (owner decision 2026-11-10)
+
+**PAUSED:** Do not assign, instruct, reawaken, merge or incur AI coding/review charges from Codex, Copilot or other SaaSFactory agents while work focuses on MentionCheck in a separate repo. See [docs/AGENT-PAUSE-AND-RESUME.md](docs/AGENT-PAUSE-AND-RESUME.md) for the freeze register and controlled restart. Deterministic CI continues. This hold takes precedence over previously authorized automation until explicitly lifted by the owner.
+
 # Agent operating rules — SaaS Factory
 
 - This repository is **not** a deployable business application. Keep all factory code and tests in this repository only.

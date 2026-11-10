@@ -87,10 +87,12 @@ test('recovery requires exactly one valid specialist role', async () => {
 
 test('workflow is failure-only, guarded, and checks out only trusted main with read-only contents', () => {
   // Recovery is enabled only for authenticated Copilot PR CI failures.
-  assert.match(WORKFLOW, /^  workflow_run:/m);
-  assert.match(WORKFLOW, /workflows: \['SaaS Factory CI'\]/);
-  assert.match(WORKFLOW, /types: \[completed\]/);
-  assert.match(WORKFLOW, /- 'copilot\/\*\*'/);
+  assert.doesNotMatch(WORKFLOW, /^  workflow_run:/m);
+  assert.match(WORKFLOW, /^  workflow_dispatch:/m);
+  assert.match(WORKFLOW, /\n      false &&\n/);
+  assert.doesNotMatch(WORKFLOW, /^    workflows:/m);
+  assert.doesNotMatch(WORKFLOW, /^    types:/m);
+  assert.doesNotMatch(WORKFLOW, /^      - 'copilot\/\*\*'/m);
   assert.match(WORKFLOW, /github\.ref == 'refs\/heads\/main'/);
   assert.match(WORKFLOW, /github\.event\.workflow_run\.event == 'pull_request'/);
   assert.match(WORKFLOW, /github\.event\.workflow_run\.head_repository\.full_name == github\.repository/);
