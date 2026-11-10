@@ -135,3 +135,18 @@ test('localized overlay refuses unsafe origins and symlinked project root', () =
     assert.ok(fs.existsSync(path.join(app.destination, 'app/layout.tsx')));
   } finally { fs.rmSync(base, { recursive: true, force: true }); }
 });
+
+
+test('localized overlay rejects auth-capable generated starters even when app pages look neutral', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-i18n-auth-'));
+  try {
+    const config = JSON.parse(fs.readFileSync(new URL('../examples/minimal.json', import.meta.url), 'utf8'));
+    config.projectSlug = 'i18n-auth-check';
+    config.domain = 'i18n-auth-check.example';
+    config.productName = 'i18n auth check';
+    config.modules = ['ai-disabled', 'auth'];
+    const app = generateProject({configText: JSON.stringify(config), outputRoot: root, write: true});
+    assert.throws(() => integrateNeutralI18nSeo({projectDir: app.destination, origin: 'https://example.org', write: true}), /Unexpected starter|Only untouched/);
+    assert.ok(fs.existsSync(path.join(app.destination, 'app/layout.tsx')));
+  } finally { fs.rmSync(root, {recursive:true, force:true}); }
+});

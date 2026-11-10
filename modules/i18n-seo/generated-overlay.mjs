@@ -22,7 +22,13 @@ function readUntouchedStarter(dir) {
   const layout = readSafe(path.join(appDir, 'layout.tsx'));
   const page = readSafe(path.join(appDir, 'page.tsx'));
   const smoke = readSafe(path.join(root, 'tests/smoke.test.mjs'));
-  if (!readSafe(path.join(root, 'README.md')).includes('Neutral SaaS starter.') ||
+  const readme = readSafe(path.join(root, 'README.md'));
+  const metadataText = /\x60{3}json\s*([\s\S]*?)\x60{3}/u.exec(readme)?.[1];
+  let metadata;
+  try { metadata = JSON.parse(metadataText); } catch { throw Error('Invalid neutral starter metadata'); }
+  if (!readme.includes('Neutral SaaS starter.') ||
+      !Array.isArray(metadata?.modules) || metadata.modules.length !== 1 ||
+      metadata.modules[0] !== 'ai-disabled' ||
       !layout.includes("import './globals.css'") ||
       !layout.includes("title: 'SaaS project'") ||
       !page.includes('This neutral starter is ready for your product.') ||
