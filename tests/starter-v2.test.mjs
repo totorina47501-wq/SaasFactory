@@ -125,6 +125,8 @@ test('rejects unsupported, unsafe, or incompatible profile selections before wri
       { configText: JSON.stringify({ ...JSON.parse(example), modules: [{ id: 'unknown', version: '1.0.0' }] }), outputRoot },
       { configText: JSON.stringify({ ...JSON.parse(example), schemaVersion: 1 }), outputRoot },
       { configText: example, outputRoot, integrations: ['unlisted'] },
+      { configText: example, outputRoot, integrations: new Array(1) },
+      { configText: example, outputRoot, extra: true },
       { configText: example, outputRoot, integrations: ['i18n-seo'], origin: 'http://starter.example' },
       {
         configText: JSON.stringify(nonNeutralConfig),

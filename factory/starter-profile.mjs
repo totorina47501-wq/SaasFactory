@@ -16,10 +16,16 @@ function fail(message) {
 
 function validateOptions(options) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) fail('options must be an object.');
-  const keys = Object.keys(options);
-  if (keys.some(key => !profileFields.includes(key)) ||
+  const prototype = Object.getPrototypeOf(options);
+  const keys = Reflect.ownKeys(options);
+  if ((prototype !== Object.prototype && prototype !== null) ||
+      keys.some(key => typeof key !== 'string' || !profileFields.includes(key)) ||
       ['configText', 'outputRoot'].some(key => !Object.hasOwn(options, key))) {
     fail('unknown or missing options.');
+  }
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(options, key);
+    if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) fail('options must contain plain data fields.');
   }
   if (typeof options.configText !== 'string' || Buffer.byteLength(options.configText, 'utf8') > 65_536) {
     fail('configText must be a JSON string no larger than 64 KiB.');
@@ -28,11 +34,17 @@ function validateOptions(options) {
     fail('an explicit outputRoot is required.');
   }
   if (options.write !== undefined && typeof options.write !== 'boolean') fail('write must be boolean.');
-  if (options.integrations !== undefined && !Array.isArray(options.integrations)) {
+  if (options.integrations !== undefined &&
+      (!Array.isArray(options.integrations) || Object.getPrototypeOf(options.integrations) !== Array.prototype)) {
     fail('integrations must be an array.');
   }
   const integrations = options.integrations ?? [];
-  if (integrations.some(id => typeof id !== 'string' || !integrationIds.has(id)) ||
+  if (Reflect.ownKeys(integrations).length !== integrations.length + 1 ||
+      Array.from({ length: integrations.length }, (_, index) => {
+        const descriptor = Object.getOwnPropertyDescriptor(integrations, String(index));
+        if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) fail('integrations must be a dense array of plain values.');
+        return descriptor.value;
+      }).some(id => typeof id !== 'string' || !integrationIds.has(id)) ||
       new Set(integrations).size !== integrations.length) {
     fail('integrations contains an unsupported or duplicate value.');
   }
