@@ -87,7 +87,7 @@ test('i18n SEO is opt-in and limited to the neutral standalone configuration', (
     assert.equal(preview.mode, 'dry-run');
     assert.equal(preview.integrations[0].id, 'i18n-seo');
     assert.equal(preview.integrations[0].contractVersion, 1);
-    assert.equal(preview.integrations[0].files.length, 13);
+    assert.equal(preview.integrations[0].files.length, 14);
     assert.ok(preview.files.includes('app/fr-FR/features/page.tsx'));
     assert.ok(preview.files.includes('app/robots.ts'));
     assert.deepEqual(fs.readdirSync(outputRoot), []);
@@ -100,9 +100,12 @@ test('i18n SEO is opt-in and limited to the neutral standalone configuration', (
       write: true,
     });
     assert.equal(written.mode, 'write');
+    assert.equal(written.generator.schemaVersion, undefined);
+    assert.equal(written.resolution.schemaVersion, 2);
+    assert.equal(fs.existsSync(path.join(written.destination, 'factory-manifest.json')), false);
     assert.ok(fs.existsSync(path.join(written.destination, 'app/fr-FR/features/page.tsx')));
     assert.ok(fs.existsSync(path.join(written.destination, 'app/en/pricing/page.tsx')));
-    assert.match(fs.readFileSync(path.join(written.destination, 'app/fr-FR/pricing/page.tsx'), 'utf8'), /index: false/);
+    assert.match(fs.readFileSync(path.join(written.destination, 'app/fr-FR/pricing/page.tsx'), 'utf8'), /"index": false/);
     execFileSync(process.execPath, ['--test', 'tests/smoke.test.mjs'], {
       cwd: written.destination,
       stdio: 'pipe',

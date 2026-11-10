@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "productName": "SaaS Starter",
+  "projectSlug": "saas-starter-v2",
+  "domain": "starter.example",
+  "modules": [
+    { "id": "ai-disabled", "version": "1.0.0" },
+    { "id": "api", "version": "1.0.0" },
+    { "id": "auth", "version": "1.0.0" },
+    { "id": "billing-test", "version": "1.0.0" },
+    { "id": "media", "version": "1.0.0" }
+  ],
+  "acceptedLimitations": [
+    { "id": "ai-disabled", "version": "1.0.0", "limitations": ["disabled-by-design"] },
+    { "id": "api", "version": "1.0.0", "limitations": ["example-route-only"] },
+    { "id": "auth", "version": "1.0.0", "limitations": ["injected-boundary-only"] },
+    { "id": "billing-test", "version": "1.0.0", "limitations": ["simulation-only"] },
+    { "id": "media", "version": "1.0.0", "limitations": ["synthetic-fixtures-only"] }
+  ],
+  "prerequisites": [],
+  "permissions": [],
+  "offline": true,
+  "languages": ["fr-FR", "en"],
+  "defaultLanguage": "fr-FR",
+  "deploymentTarget": "none"
+}
