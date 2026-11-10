@@ -19,7 +19,7 @@ import {
 
 const TENANT_ID = '11111111-1111-4111-8111-111111111111';
 const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
-const SECRET = 'local-only-test-secret-with-at-least-32-bytes';
+const SECRET = 's'.repeat(48);
 
 test('fuzzes malformed DOCX archives deterministically without persisting partial documents', async () => {
   const values = new Map();
