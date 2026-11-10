@@ -81,29 +81,57 @@ jobs:
           node -e "const m=require('/tmp/factory-manifest.json');if(m.mode!=='dry-run'||m.files.length<10)process.exit(1)"
   generated-app:
     needs: generator
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: minimal
+            config: examples/minimal.json
+            slug: atelier-exemple
+            playwright: true
+          - profile: starter-v2
+            config: examples/saas-starter-v2.json
+            slug: saas-starter-v2
+            playwright: false
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Generate an isolated minimal project
-        run: node generate.mjs --config examples/minimal.json --output-root "$RUNNER_TEMP/generated" --write
+      - name: Generate an isolated project
+        run: node generate.mjs --config ${{ matrix.config }} --output-root "$RUNNER_TEMP/generated" --write
       - uses: actions/cache@v4
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-npm-generated-next-15.5.28-react-19.3.1-ts-5.9.3-v1
+          key: ${{ runner.os }}-npm-generated-${{ matrix.profile }}-next-15.5.28-react-19.3.1-ts-5.9.3-v1
       - name: Install generated project dependencies
-        working-directory: ${{ runner.temp }}/generated/atelier-exemple
+        working-directory: ${{ runner.temp }}/generated/${{ matrix.slug }}
         run: npm install --ignore-scripts --no-audit --no-fund
       - name: Test generated project
-        working-directory: ${{ runner.temp }}/generated/atelier-exemple
+        working-directory: ${{ runner.temp }}/generated/${{ matrix.slug }}
         run: npm test
       - name: Typecheck generated project
-        working-directory: ${{ runner.temp }}/generated/atelier-exemple
+        working-directory: ${{ runner.temp }}/generated/${{ matrix.slug }}
         run: npm run typecheck
       - name: Build generated project
-        working-directory: ${{ runner.temp }}/generated/atelier-exemple
+        if: ${{ matrix.profile == 'minimal' }}
+        working-directory: ${{ runner.temp }}/generated/${{ matrix.slug }}
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
         run: npm run build
-
+      - name: Report blocked v2 build
+        if: ${{ matrix.profile == 'starter-v2' }}
+        run: echo "::warning::The generated v2 API route currently fails Next.js route type generation; see docs/testing.md."
+      - name: Install Playwright runner
+        if: ${{ matrix.playwright }}
+        run: npm install --ignore-scripts --no-audit --no-fund --package-lock=false
+      - name: Install Chromium
+        if: ${{ matrix.playwright }}
+        run: npx playwright install --with-deps chromium
+      - name: Verify generated app in a local browser
+        if: ${{ matrix.playwright }}
+        env:
+          FACTORY_APP_DIR: ${{ runner.temp }}/generated/${{ matrix.slug }}
+        run: npm run test:acceptance
