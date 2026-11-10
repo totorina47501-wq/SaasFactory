@@ -93,6 +93,38 @@ test('growth-intelligence specialist dispatches only one approved P1 mission',as
  assert.equal(x.calls.find(c=>c[0]==='assign')[1].agent_assignment.custom_agent,'growth-intelligence');
 });
 test('four active missions prevent dispatch',async()=>{const x=await exercise([issue(2,['agent:in-progress']),issue(3,['agent:review']),issue(4,['agent:in-progress']),issue(5,['agent:review']),issue(8,['agent:approved'])]);assert.equal(x.report.decision,'capacity-full');assert.equal(x.calls.length,0)});
+test('GitHub partner Codex assignee counts against the same four-mission limit without special labels',async()=>{
+ const codex=issue(129,[],'Files: delivery/');
+ codex.assignees=[{login:'Codex'}];
+ const x=await exercise([
+  issue(41,['agent:in-progress'],'Files: modules/analytics/'),
+  issue(42,['agent:in-progress'],'Files: modules/rag-lifecycle/'),
+  issue(44,['agent:in-progress'],'Files: modules/i18n-seo/'),
+  codex,issue(53,['agent:approved','agent:role:qa-engineer'],'Files: tests/acceptance/')
+ ]);
+ assert.equal(x.report.decision,'capacity-full');
+ assert.deepEqual(x.report.active,[41,42,44,129]);
+ assert.equal(x.calls.length,0);
+});
+test('GitHub Codex PR remains capacity-occupied when its issue lacks labels and assignees',async()=>{
+ const x=await exercise([
+  issue(41,['agent:in-progress'],'Files: modules/analytics/'),
+  issue(42,['agent:in-progress'],'Files: modules/rag-lifecycle/'),
+  issue(44,['agent:in-progress'],'Files: modules/i18n-seo/'),
+  issue(129,[],'Files: delivery/'),
+  issue(53,['agent:approved','agent:role:qa-engineer'],'Files: tests/acceptance/')
+ ],[pr(130,'Fixes #129','codex/golden-path')]);
+ assert.equal(x.report.decision,'capacity-full');
+ assert.deepEqual(x.report.active,[41,42,44,129]);
+ assert.equal(x.calls.length,0);
+});
+test('unlinked Codex partner PR fails closed without new mission assignment',async()=>{
+ const x=await exercise([issue(53,['agent:approved','agent:role:qa-engineer'])],
+  [pr(130,'','codex/unlinked')]);
+ assert.equal(x.report.decision,'blocked:unlinked-pr');
+ assert.ok(x.report.blockers.some(b=>b.includes('Unlinked coding-agent PR #130')));
+ assert.equal(x.calls.length,0);
+});
 test('two active missions leave room for one approved assignment',async()=>{const x=await exercise([issue(2,['agent:in-progress'],'Files: src/a.js'),issue(3,['agent:review'],'Files: src/b.js'),issue(8,['agent:approved','agent:role:qa-engineer'],'Files: src/c.js')]);assert.equal(x.report.decision,'assigned:#8');assert.equal(x.calls.filter(a=>a[0]==='assign').length,1)});
 test('active Copilot PR consumes capacity; overlapping scope blocked',async()=>{const x=await exercise([issue(2,[],'Files: src/a.js'),issue(7,['agent:approved','agent:role:qa-engineer'])],[pr(3,'Fixes #2','copilot/task')],{files:{3:[{filename:'src/a.js'}]}});assert.equal(x.report.decision,'blocked:file-overlap');assert.equal(x.calls.length,0)});
 test('unlinked Copilot PR blocks new tasks',async()=>{const x=await exercise([issue(8,['agent:approved'])],[pr(3,'','copilot/task')]);assert.equal(x.report.decision,'blocked:unlinked-pr')});

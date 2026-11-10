@@ -38,15 +38,16 @@ module.exports = async ({github, context, core, fs, orchestration = factoryOrche
     const has = (i,label)=>i.labels.some(l=>(typeof l==='string'?l:l.name)===label);
     const matches = (pr,i)=>new RegExp('(?:fixes|closes|resolves)\\s+#'+i.number+'\\b','i').test(pr.body||'') || (pr.body||'').includes('#'+i.number);
     // A Copilot-assigned issue holds capacity even before the corresponding PR opens.
-    const assigned = work.filter(i=>i.assignees.some(a=>/^(copilot|copilot-swe-agent)(\[bot\])?$/i.test(a.login)) ||
+    const assigned = work.filter(i=>i.assignees.some(a=>/^(copilot|copilot-swe-agent|codex)(\[bot\])?$/i.test(a.login)) ||
       has(i,'agent:in-progress') || has(i,'agent:review') || has(i,'agent:blocked'));
     const active = new Set(assigned.map(i=>i.number));
     for(const p of prs) {
       report.prs.push({number:p.number,head:p.head.ref,draft:p.draft,author:p.user?.login});
-      if(p.user?.login==='Copilot' || p.head.ref.startsWith('copilot/')) {
+      if(p.user?.login==='Copilot' || p.user?.login==='Codex' ||
+        p.head.ref.startsWith('copilot/') || p.head.ref.startsWith('codex/')) {
         const linked=work.find(i=>matches(p,i));
         if(linked) active.add(linked.number);
-        else report.blockers.push(`Unlinked Copilot PR #${p.number}: manual review needed`);
+        else report.blockers.push(`Unlinked coding-agent PR #${p.number}: manual review needed`);
       }
     }
     report.active=[...active].sort((a,b)=>a-b);
