@@ -150,7 +150,9 @@ function mapOutput(raw, sourceCount) {
     }
     indexes.push(index);
   }
-  if (output.abstain ? indexes.length !== 0 : indexes.length === 0 || !output.answer.trim()) {
+  if (output.abstain
+    ? indexes.length !== 0 || output.answer.trim() !== ''
+    : indexes.length === 0 || !output.answer.trim()) {
     fail('INVALID_MODEL_OUTPUT');
   }
   return Object.freeze({
@@ -339,6 +341,8 @@ export function createLocalLlmService(options = {}) {
           typeof input.promptVersion !== 'string' || !PROMPT_VERSION.test(input.promptVersion) ||
           typeof input.question !== 'string' || !input.question.isWellFormed() ||
           !input.question.trim() || input.question.length > 4000) fail('INVALID_INPUT');
+      if (input.maxTokens !== undefined &&
+          !boundedInteger(input.maxTokens, 1, limits.maxTokens)) fail('INPUT_LIMIT');
 
       const appPrompt = prompts.get(`${input.appId}:${input.promptVersion}`);
       if (!appPrompt) fail('PROMPT_NOT_FOUND');

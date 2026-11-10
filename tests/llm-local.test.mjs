@@ -134,6 +134,11 @@ test('adapter rejects model tampering and missing engine without exposing proces
   const fixture = await setup('process.stderr.write("sensitive engine output"); process.exit(2);');
   t.after(() => rm(fixture.directory, { recursive: true, force: true }));
   const adapter = adapterFor(fixture);
+  await assert.rejects((async () => {
+    for await (const _chunk of adapter.stream({ systemPrompt: 'system', prompt: 'prompt' })) {}
+  })(), error => error instanceof LocalLlmError &&
+    error.code === 'ENGINE_FAILED' && !error.message.includes('sensitive engine output'));
+
   await writeFile(fixture.model.path, 'changed model');
   await expectCode((async () => {
     for await (const _chunk of adapter.stream({ systemPrompt: 'system', prompt: 'prompt' })) {}
@@ -245,6 +250,17 @@ test('prompt injection remains in source data, cannot add tools, and cannot inve
     results: [{ text: 'Only source.', citation: CITATION_A }],
   }).service;
   await expectCode(invalid.answer(answerInput()), 'INVALID_MODEL_OUTPUT');
+
+  const invalidAbstention = serviceWith({
+    adapter: {
+      contractVersion: 1,
+      async *stream() {
+        yield '{"answer":"unsupported claim","sourceIndexes":[],"abstain":true}';
+      },
+    },
+    results: [{ text: 'Only source.', citation: CITATION_A }],
+  }).service;
+  await expectCode(invalidAbstention.answer(answerInput()), 'INVALID_MODEL_OUTPUT');
 });
 
 test('assistant abstains without sources and isolates each tenant source result', async () => {

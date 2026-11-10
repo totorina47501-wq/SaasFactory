@@ -21,13 +21,12 @@ Exemples de familles de modèles à évaluer, sans poids ni version préinstall�
 | Famille | Nomenclature amont | Licence à vérifier pour la révision choisie |
 | --- | --- | --- |
 | Qwen2.5 Instruct GGUF | `Qwen2.5-0.5B-Instruct-GGUF`, `Qwen2.5-1.5B-Instruct-GGUF` | Apache-2.0 déclarée par la famille ; vérifier le dépôt, la quantification et les fichiers exacts |
-| Llama 3.2 Instruct GGUF | `Llama-3.2-1B-Instruct-GGUF`, `Llama-3.2-3B-Instruct-GGUF` | Licence communautaire Llama, pas une licence OSI ; vérifier les conditions avant usage |
 
 Ces noms sont des pistes, pas des modèles validés par le module. Avant chaque
 activation, examiner la provenance et la licence du fichier précis, puis
 enregistrer son chemin absolu, sa version, sa licence, sa taille en octets, son
 SHA-256 et une exigence mémoire mesurée. L'adaptateur vérifie taille et SHA-256
-au premier usage de chaque requête ; un fichier absent, modifié ou de taille
+à chaque requête ; un fichier absent, modifié ou de taille
 incorrecte fait échouer la requête.
 
 ```js
@@ -42,7 +41,7 @@ const adapter = createLlamaCppAdapter({
   runtimeVersion: 'version-installée-par-l-operateur',
   model: {
     path: '/opt/models/model.gguf',
-    version: 'révision-et-quantification',
+    version: 'qwen2.5-0.5b-instruct-q4_k_m-r1',
     license: 'licence-vérifiée',
     sizeBytes: 123456789,
     sha256: 'a'.repeat(64),
