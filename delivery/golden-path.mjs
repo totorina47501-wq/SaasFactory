@@ -222,6 +222,7 @@ async function runLocalHttpSmoke({ cwd, port, timeoutMs = 90_000 }) {
   const deadline = Date.now() + timeoutMs;
   let responseCode = null;
   let responseBody = null;
+  let responseOk = false;
   let lastError = null;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) break;
@@ -232,7 +233,7 @@ async function runLocalHttpSmoke({ cwd, port, timeoutMs = 90_000 }) {
       });
       responseCode = res.status;
       responseBody = trimOutput(await res.text());
-      if (res.ok && /<html/i.test(responseBody)) break;
+      if (res.ok && /<html/i.test(responseBody)) { responseOk = true; break; }
       lastError = new Error('Unexpected HTTP response status: ' + String(res.status));
     } catch (error) {
       lastError = error;
@@ -256,7 +257,7 @@ async function runLocalHttpSmoke({ cwd, port, timeoutMs = 90_000 }) {
     try { child.kill('SIGKILL'); } catch {}
   }
 
-  if (responseCode === null || responseBody === null || !/<html/i.test(responseBody)) {
+  if (!responseOk || responseCode === null || responseBody === null || !/<html/i.test(responseBody)) {
     throw new Error('HTTP smoke failed: ' + (lastError ? String(lastError.message || lastError) : 'server did not become ready'));
   }
 
@@ -316,12 +317,14 @@ function seasonalInteractionChecks(page, preset) {
   ];
 }
 
-function hashExistingFiles(files) {
+function hashExistingFiles(files, rootDir) {
   const items = [];
   for (const file of files) {
     if (!fs.existsSync(file)) continue;
     const content = safeReadText(file);
-    items.push({ file, sha256: sha256Text(content) });
+    const relative = path.relative(rootDir, file).split(path.sep).join('/');
+    if (!relative || relative.startsWith('../') || relative === '..' || path.isAbsolute(relative)) throw new Error('Evidence file escapes product root.');
+    items.push({ file: relative, sha256: sha256Text(content) });
   }
   const digest = sha256Text(items.map((item) => item.file + ':' + item.sha256).join('\n'));
   return { contentSha256: digest, files: items };
@@ -517,6 +520,7 @@ async function qualifySeasonalProduct({ preset, index, mode, seasonalRoot, seaso
         cwd: staticDir,
         timeoutMs: 420_000,
       });
+      notes.push('Static-export build validates the neutral Next.js baseline, NOT the seasonal interactive application.');
       if (!fs.existsSync(path.join(staticDir, 'out', 'index.html'))) {
         checks.push({ name: 'static-export-out', status: STATUS.FAIL, reason: 'Missing out/index.html after static-export build.' });
       } else {
@@ -532,7 +536,7 @@ async function qualifySeasonalProduct({ preset, index, mode, seasonalRoot, seaso
       path.join(report.destination, 'tests/smoke.test.mjs'),
       path.join(report.destination, 'package.json'),
       path.join(report.destination, 'next.config.ts'),
-    ]);
+    ], report.destination);
     report.contentSha256 = evidence.contentSha256;
     report.contentFiles = evidence.files;
   } catch (error) {
@@ -595,7 +599,7 @@ async function qualifyDockerAndCompose({ mode, deploymentRoot, verify, sourceSha
         path.join(dockerDir, 'Dockerfile'),
         path.join(dockerDir, '.dockerignore'),
         path.join(dockerDir, 'DEPLOYMENT.md'),
-      ]);
+      ], dockerDir);
       result.contentSha256 = evidence.contentSha256;
       result.contentFiles = evidence.files;
       result.status = statusFromChecks(checks);
@@ -740,29 +744,23 @@ async function qualifyDockerAndCompose({ mode, deploymentRoot, verify, sourceSha
       if (!dockerComposeIsAvailable()) {
         checks.push({ name: 'compose-config', status: STATUS.INCOMPLETE, reason: 'docker compose is unavailable in this environment.' });
       } else {
-        const envFile = path.join(composeDir, '.golden-path-compose.env');
-        safeWriteNewFile(envFile, [
-          'APP_SLUG=minimal-compose-qualification',
-          'POSTGRES_PASSWORD=local-only-password',
-          'DATABASE_URL=postgresql://saas:local-only-password@postgres:5432/saas',
-          'APP_PORT=3000',
-          'POSTGRES_DB=saas',
-          'POSTGRES_USER=saas',
-          'POSTGRES_PORT=55432',
-        ].join('\n') + '\n');
-        try {
-          checks.push({ name: 'compose-config', status: STATUS.PASS, detail: runCheckedCommand({
-            label: 'docker compose config',
-            command: 'docker',
-            args: ['compose', '--env-file', envFile, 'config'],
-            cwd: composeDir,
-            timeoutMs: 90_000,
-          }) });
-        } finally {
-          try {
-            fs.rmSync(envFile, { force: true });
-          } catch {}
-        }
+        // Never write test connection values to disk or print resolved Compose configuration.
+        checks.push({ name: 'compose-config', status: STATUS.PASS, detail: runCheckedCommand({
+          label: 'docker compose config --quiet',
+          command: 'docker',
+          args: ['compose', 'config', '--quiet'],
+          cwd: composeDir,
+          timeoutMs: 90_000,
+          env: {
+            APP_SLUG: 'minimal-compose-qualification',
+            POSTGRES_PASSWORD: 'synthetic-local-only',
+            DATABASE_URL: 'postgresql://saas:synthetic-local-only@postgres:5432/saas',
+            APP_PORT: '3000',
+            POSTGRES_DB: 'saas',
+            POSTGRES_USER: 'saas',
+            POSTGRES_PORT: '55432',
+          },
+        }) });
       }
     }
 
@@ -772,7 +770,7 @@ async function qualifyDockerAndCompose({ mode, deploymentRoot, verify, sourceSha
       path.join(dockerDir, 'package-lock.json'),
       path.join(dockerDir, 'compose.yaml'),
       path.join(dockerDir, 'DEPLOYMENT.md'),
-    ]);
+    ], dockerDir);
     result.contentSha256 = evidence.contentSha256;
     result.contentFiles = evidence.files;
   } catch (error) {
@@ -889,7 +887,8 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
       }
       const report = await runGoldenPath(cli);
       process.stdout.write(stableJson(report));
-      if (report.summary.FAIL > 0) {
+      if (report.summary.FAIL > 0 || (cli.verify && report.summary.INCOMPLETE > 0)) {
+        // A required qualification not executed is not a green release gate.
         process.exitCode = 1;
       }
     } catch (error) {

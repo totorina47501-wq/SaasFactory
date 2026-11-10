@@ -61,3 +61,12 @@ test('markdown report includes pass/fail/incomplete matrix rows', () => {
   assert.match(markdown, /\| minimal-saas \| docker\+compose \| INCOMPLETE \|/);
   assert.match(markdown, /docker-build-run/);
 });
+
+
+test('CI evidence fails closed for incomplete qualification and protects Compose values', () => {
+  const source = fs.readFileSync(new URL('../delivery/golden-path.mjs', import.meta.url), 'utf8');
+  assert.match(source, /cli\.verify && report\.summary\.INCOMPLETE > 0/);
+  assert.match(source, /'compose', 'config', '--quiet'/);
+  assert.doesNotMatch(source, /--env-file|golden-path-compose\.env/);
+  assert.match(source, /if \(!responseOk \|\| responseCode === null/);
+});
