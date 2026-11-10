@@ -199,6 +199,48 @@ function runCheckedCommand({ label, command, args, cwd, timeoutMs = 300_000, env
   return result;
 }
 
+// npm run start launches a Next.js descendant that inherits npm's stdout/stderr.
+// Terminating only npm can leave that descendant and its pipe handles alive,
+// preventing Node and the CI step from exiting after an otherwise PASS report.
+async function stopSmokeProcessTree(child) {
+  const sendSignal = (signal) => {
+    try {
+      // runLocalHttpSmoke starts an isolated POSIX process group; never signal our own group.
+      if (process.platform !== 'win32' && Number.isInteger(child.pid) && child.pid > 0) {
+        process.kill(-child.pid, signal);
+      } else {
+        child.kill(signal);
+      }
+    } catch (error) {
+      if (error?.code !== 'ESRCH') throw error;
+    }
+  };
+
+  let timer;
+  let closeListener;
+  const closedPromise = new Promise((resolve) => {
+    closeListener = () => resolve(true);
+    child.once('close', closeListener);
+  });
+  const alreadyClosed = (child.exitCode !== null || child.signalCode !== null)
+    && child.stdout?.destroyed && child.stderr?.destroyed;
+
+  sendSignal('SIGTERM');
+  const closed = alreadyClosed ? true : await Promise.race([
+    closedPromise,
+    new Promise((resolve) => { timer = setTimeout(() => resolve(false), 2_000); }),
+  ]);
+  if (timer) clearTimeout(timer);
+  child.off('close', closeListener);
+
+  if (!closed) {
+    // Force-stop inherited-pipe holders instead of waiting for the workflow timeout.
+    sendSignal('SIGKILL');
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+  }
+}
+
 async function runLocalHttpSmoke({ cwd, port, timeoutMs = 90_000 }) {
   const args = ['run', 'start', '--', '--hostname', '127.0.0.1', '--port', String(port)];
   const child = spawn('npm', args, {
@@ -206,6 +248,7 @@ async function runLocalHttpSmoke({ cwd, port, timeoutMs = 90_000 }) {
     env: { ...process.env, NODE_ENV: 'production' },
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: false,
+    detached: process.platform !== 'win32',
   });
 
   let stdout = '';
@@ -241,21 +284,7 @@ async function runLocalHttpSmoke({ cwd, port, timeoutMs = 90_000 }) {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
 
-  try {
-    child.kill('SIGTERM');
-  } catch {}
-  if (child.exitCode === null) {
-    await new Promise((resolve) => {
-      const timer = setTimeout(resolve, 2_000);
-      child.once('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-  }
-  if (child.exitCode === null) {
-    try { child.kill('SIGKILL'); } catch {}
-  }
+  await stopSmokeProcessTree(child);
 
   if (!responseOk || responseCode === null || responseBody === null || !/<html/i.test(responseBody)) {
     throw new Error('HTTP smoke failed: ' + (lastError ? String(lastError.message || lastError) : 'server did not become ready'));
@@ -903,4 +932,5 @@ export const _private = {
   ensureSafeFreshRoot,
   seasonalInteractionChecks,
   markdownReport,
+  runLocalHttpSmoke,
 };

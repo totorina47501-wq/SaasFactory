@@ -45,3 +45,9 @@ Le workflow `.github/workflows/golden-path.yml` publie l'artefact `golden-path-r
 - `golden-path-report.md`
 
 La rétention est bornée et le workflow reste en permissions lecture seule.
+
+## Diagnostic CI du 10 novembre 2026 (PR #130)
+
+Le run Golden Path a généré un rapport **4 PASS / 0 FAIL / 0 INCOMPLETE** en environ 3 minutes, mais le processus CLI a continué à vivre jusqu'au timeout de 60 minutes. Les logs de nettoyage identifient des processus `next-server` orphelins. Le smoke HTTP ferme maintenant le groupe de processus POSIX de `npm run start`, y compris ses descendants, avec une fenêtre SIGTERM bornée et un repli SIGKILL. Un test local vérifie la libération du port après le smoke. Aucun contrôle de qualification n'est désactivé.
+
+Preuve à revérifier sur le SHA de correction : `npm test`, la CI standard et le workflow Golden Path terminé en succès, avec artefact `golden-path-report`. Un rapport PASS sans conclusion CI success n'est pas une preuve suffisante.
