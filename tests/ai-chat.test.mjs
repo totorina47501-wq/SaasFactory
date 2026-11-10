@@ -23,7 +23,12 @@ const CITATION = Object.freeze({
   metadata: Object.freeze({ category: 'guide' }),
 });
 
-function harness({ enabled = true, answer, results = [{ text: 'Verified guidance.', score: 0.8, citation: CITATION }] } = {}) {
+function harness({
+  enabled = true,
+  answer,
+  results = [{ text: 'Verified guidance.', score: 0.8, citation: CITATION }],
+  limits,
+} = {}) {
   const values = new Map();
   const retrieval = { results };
   const calls = { answers: [], searches: [] };
@@ -61,6 +66,7 @@ function harness({ enabled = true, answer, results = [{ text: 'Verified guidance
     async answer(input) {
       calls.answers.push(input);
       if (answer instanceof Error) throw answer;
+      if (typeof answer === 'function') return answer(input);
       return answer ?? { contractVersion: 1, promptVersion: '1.0.0', answer: 'A supported answer.', citations: [CITATION], abstain: false };
     },
   };
@@ -72,9 +78,10 @@ function harness({ enabled = true, answer, results = [{ text: 'Verified guidance
     assistant,
     appId: 'example-app',
     promptVersions: ['1.0.0'],
+    limits,
     clock: () => 1_700_000_000_000,
   });
-  return { service, values, calls, retrieval };
+  return { service, values, calls, retrieval, tenancy, store, ragSearch, assistant };
 }
 
 function request(overrides = {}) {
@@ -100,11 +107,13 @@ async function collect(stream) {
 }
 
 test('publishes the versioned chat contract and keeps generation disabled by default', async () => {
-  const { service } = harness({ enabled: false });
+  const { service, tenancy, store, ragSearch } = harness({ enabled: false });
   assert.equal(aiChatContract.contractVersion, 1);
   assert.equal(service.enabled, false);
   const session = await createSession(service);
   await expectCode(collect(service.streamMessage(request({ sessionId: session.id, question: 'Question?' }))), 'DISABLED');
+  const defaultDisabled = createAiChatService({ tenancy, store, ragSearch });
+  assert.equal(defaultDisabled.enabled, false);
 });
 
 test('persists sessions per tenant and returns only the current tenant session', async () => {
@@ -118,11 +127,18 @@ test('persists sessions per tenant and returns only the current tenant session',
     promptVersion: '1.0.0',
   }))) events.push(event);
 
+  assert.equal(events[0].status, 'generating');
   assert.equal(events.at(-1).type, 'message');
   assert.equal(events.at(-1).message.content, 'A supported answer.');
   assert.equal(calls.answers.length, 1);
   assert.equal(calls.answers[0].tenantId, TENANT_A);
   assert.equal(calls.answers[0].promptVersion, '1.0.0');
+  for await (const _event of service.streamMessage(request({
+    sessionId: sessionA.id,
+    question: 'Where is the policy?',
+    promptVersion: '1.0.0',
+  }))) {}
+  assert.equal(calls.answers.length, 1);
   assert.equal((await service.getSession(request({ sessionId: sessionA.id }))).messages.length, 2);
   assert.equal((await service.getSession(request({
     tenantId: TENANT_B,
@@ -150,6 +166,28 @@ test('does not persist a partial turn when local generation is interrupted', asy
     promptVersion: '1.0.0',
   })));
   await expectCode(pending, 'INTERRUPTED');
+  assert.equal((await service.getSession(request({ sessionId: session.id }))).messages.length, 0);
+});
+
+test('does not persist or publish an answer if its source is revoked during generation', async () => {
+  const { service, retrieval: sourceResults } = harness({
+    answer: () => {
+      sourceResults.results = [];
+      return {
+        contractVersion: 1,
+        promptVersion: '1.0.0',
+        answer: 'A supported answer.',
+        citations: [CITATION],
+        abstain: false,
+      };
+    },
+  });
+  const session = await createSession(service);
+  await expectCode(collect(service.streamMessage(request({
+    sessionId: session.id,
+    question: 'A question',
+    promptVersion: '1.0.0',
+  }))), 'SOURCE_UNAVAILABLE');
   assert.equal((await service.getSession(request({ sessionId: session.id }))).messages.length, 0);
 });
 
@@ -202,4 +240,23 @@ test('rejects unknown fields, missing prompt versions, and invalid budgets', asy
     question: ' ',
     promptVersion: '1.0.0',
   }))), 'INVALID_INPUT');
+});
+
+test('fails closed when the resolved tenant context does not match the request', async () => {
+  const { tenancy, store, ragSearch } = harness();
+  const service = createAiChatService({
+    enabled: false,
+    tenancy: { async resolveTenantContext({ requestId }) {
+      return { contractVersion: 1, tenantId: TENANT_B, requestId };
+    } },
+    store,
+    ragSearch,
+  });
+  await expectCode(service.listSessions(request()), 'TENANT_ACCESS_DENIED');
+});
+
+test('enforces tenant session quotas before writing', async () => {
+  const { service } = harness({ limits: { maxSessions: 1 } });
+  await createSession(service);
+  await expectCode(createSession(service, { requestId: 'request-2' }), 'SESSION_LIMIT');
 });

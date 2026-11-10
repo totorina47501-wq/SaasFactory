@@ -13,7 +13,7 @@ const DEFAULTS = Object.freeze({
   maxWriteRetries: 3,
 });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const PROMPT_VERSION = /^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$/u;
 const CITATION_FIELDS = [
   'documentId', 'sourceId', 'version', 'fileName', 'format', 'sha256',
@@ -77,11 +77,9 @@ function validateLimits(raw = {}) {
   return Object.freeze(limits);
 }
 
-function validateRequest(raw) {
-  const input = exactObject(raw, [
-    'cookieHeader', 'tenantId', 'requestId', 'sessionId', 'question',
-    'promptVersion', 'query', 'topK', 'signal', 'title',
-  ], ['cookieHeader', 'tenantId', 'requestId']);
+function validateRequest(raw, additionalFields = []) {
+  const input = exactObject(raw, ['cookieHeader', 'tenantId', 'requestId', ...additionalFields],
+    ['cookieHeader', 'tenantId', 'requestId']);
   if (typeof input.cookieHeader !== 'string' || input.cookieHeader.length > 8192 ||
       typeof input.tenantId !== 'string' || !UUID.test(input.tenantId) ||
       typeof input.requestId !== 'string' || !SAFE_ID.test(input.requestId)) fail('INVALID_INPUT');
@@ -359,7 +357,18 @@ export function createAiChatService(options) {
     }
     if (!current || current.contractVersion !== CONTRACT_VERSION ||
         !Array.isArray(current.results) || current.results.length > 100) fail('SOURCE_UNAVAILABLE');
-    const currentCitations = current.results.map(result => validateCitation(result.citation));
+    const currentCitations = current.results.map(result => {
+      try {
+        const entry = exactObject(result, ['text', 'score', 'citation'], undefined, 'SOURCE_UNAVAILABLE');
+        if (typeof entry.text !== 'string' || typeof entry.score !== 'number' ||
+            !Number.isFinite(entry.score) || entry.score < 0 || entry.score > 1) {
+          fail('SOURCE_UNAVAILABLE');
+        }
+        return validateCitation(entry.citation);
+      } catch {
+        fail('SOURCE_UNAVAILABLE');
+      }
+    });
     return citations.every(citation => currentCitations.some(item => matchesCitation(citation, item)));
   }
 
@@ -404,7 +413,7 @@ export function createAiChatService(options) {
     enabled,
 
     async createSession(rawInput) {
-      const input = validateRequest(rawInput);
+      const input = validateRequest(rawInput, ['title']);
       const context = await resolveContext(input);
       const title = input.title === undefined
         ? 'Nouvelle conversation'
@@ -440,7 +449,7 @@ export function createAiChatService(options) {
     },
 
     async getSession(rawInput) {
-      const input = validateRequest(rawInput);
+      const input = validateRequest(rawInput, ['sessionId']);
       if (!input.sessionId) fail('INVALID_INPUT');
       const context = await resolveContext(input);
       const { state } = await readState(context);
@@ -450,7 +459,7 @@ export function createAiChatService(options) {
     },
 
     async deleteSession(rawInput) {
-      const input = validateRequest(rawInput);
+      const input = validateRequest(rawInput, ['sessionId']);
       if (!input.sessionId) fail('INVALID_INPUT');
       const context = await resolveContext(input);
       await mutate(context, state => {
@@ -463,13 +472,13 @@ export function createAiChatService(options) {
     },
 
     async retrieve(rawInput) {
-      const input = validateRequest(rawInput);
+      const input = validateRequest(rawInput, ['query', 'topK']);
       const context = await resolveContext(input);
       return retrieve(input, context);
     },
 
     async *streamMessage(rawInput) {
-      const input = validateRequest(rawInput);
+      const input = validateRequest(rawInput, ['sessionId', 'question', 'promptVersion', 'signal']);
       if (!enabled) fail('DISABLED');
       if (!input.sessionId || input.question === undefined || input.promptVersion === undefined) {
         fail('INVALID_INPUT');
@@ -490,6 +499,7 @@ export function createAiChatService(options) {
         const saved = savedSession.messages.find(message =>
           message.role === 'assistant' && message.requestId === input.requestId);
         if (!saved) fail('CORRUPT_SESSION');
+        yield Object.freeze({ contractVersion: CONTRACT_VERSION, type: 'status', status: 'replaying' });
         yield Object.freeze({ contractVersion: CONTRACT_VERSION, type: 'message', message: saved });
         return;
       }
@@ -552,6 +562,7 @@ export function createAiChatService(options) {
         citations,
         abstain: result.abstain,
       };
+      if (input.signal?.aborted) fail('INTERRUPTED');
       const committed = await mutate(context, state => {
         const current = state.sessions.find(item => item.id === input.sessionId);
         if (!current) fail('SESSION_NOT_FOUND');
@@ -619,7 +630,7 @@ export const aiChatContract = Object.freeze({
   limits: DEFAULTS,
   streamEvents: Object.freeze(['status', 'message']),
   errors: Object.freeze([
-    'DISABLED', 'ENGINE_TIMEOUT', 'GENERATION_FAILED', 'INPUT_LIMIT', 'INVALID_CONFIGURATION',
+    'CORRUPT_SESSION', 'DISABLED', 'ENGINE_TIMEOUT', 'GENERATION_FAILED', 'INPUT_LIMIT', 'INVALID_CONFIGURATION',
     'INVALID_INPUT', 'INVALID_RESPONSE', 'PROMPT_NOT_FOUND', 'SESSION_LIMIT', 'SESSION_NOT_FOUND',
     'SOURCE_UNAVAILABLE', 'STORAGE_BUSY', 'STORAGE_LIMIT', 'STORAGE_UNAVAILABLE', 'TENANT_ACCESS_DENIED',
     'TURN_LIMIT', 'UNAVAILABLE',
