@@ -5,8 +5,10 @@ const STORAGE_KEY = 'rag-lifecycle-v1/state';
 const JOB_TYPE = 'rag.lifecycle';
 const DEFAULTS = Object.freeze({
   batchSize: 32,
+  maxChunkCodeUnits: 10_000,
   maxAttempts: 3,
   maxChunksPerDocument: 5000,
+  maxDocumentTextCodeUnits: 2 * 1024 * 1024,
   maxOperations: 10_000,
   maxWriteRetries: 3,
 });
@@ -53,8 +55,10 @@ function validateLimits(value = {}) {
   const limits = { ...DEFAULTS, ...input };
   const maxima = {
     batchSize: 256,
+    maxChunkCodeUnits: 100_000,
     maxAttempts: 10,
     maxChunksPerDocument: 100_000,
+    maxDocumentTextCodeUnits: 16 * 1024 * 1024,
     maxOperations: 100_000,
     maxWriteRetries: 10,
   };
@@ -108,6 +112,21 @@ function validateModel(value) {
   });
 }
 
+function dataArray(value, maximum, errorCode) {
+  if (!Array.isArray(value) || value.length > maximum) fail(errorCode);
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || !keys.includes('length')) fail(errorCode);
+  const keySet = new Set(keys);
+  const result = [];
+  for (let index = 0; index < value.length; index += 1) {
+    if (!keySet.has(String(index))) fail(errorCode);
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) fail(errorCode);
+    result.push(descriptor.value);
+  }
+  return result;
+}
+
 function validateMetadata(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) fail('INVALID_SOURCE');
   const keys = Reflect.ownKeys(value);
@@ -130,11 +149,10 @@ function validateMetadata(value) {
 function validateAcl(value) {
   const acl = exactObject(value, ['readerIds', 'roles']);
   const list = (items, pattern, maximum) => {
-    if (!Array.isArray(items) || items.length > maximum ||
-        Object.keys(items).length !== items.length ||
-        items.some(item => typeof item !== 'string' || !pattern.test(item))) fail('INVALID_SOURCE');
-    if (new Set(items).size !== items.length) fail('INVALID_SOURCE');
-    return Object.freeze([...items]);
+    const values = dataArray(items, maximum, 'INVALID_SOURCE');
+    if (values.some(item => typeof item !== 'string' || !pattern.test(item)) ||
+        new Set(values).size !== values.length) fail('INVALID_SOURCE');
+    return Object.freeze(values);
   };
   const readerIds = list(acl.readerIds, UUID, 100).map(id => id.toLowerCase());
   const roles = list(acl.roles, /^[a-z][a-z0-9-]{0,31}$/u, 32);
@@ -147,31 +165,47 @@ function validateDocument(value, reference, limits) {
     'id', 'sourceId', 'fileName', 'format', 'version', 'sha256', 'text',
     'pageCount', 'createdAt', 'chunks', 'deduplicated', 'metadata', 'acl',
   ], [
-    'id', 'sourceId', 'fileName', 'format', 'version', 'sha256', 'chunks',
-    'metadata', 'acl',
+    'id', 'sourceId', 'fileName', 'format', 'version', 'sha256', 'text',
+    'pageCount', 'createdAt', 'chunks', 'metadata', 'acl',
   ], 'INVALID_SOURCE');
-  if (source.id !== reference.documentId || source.sourceId !== reference.sourceId ||
+  if (typeof source.id !== 'string' || !UUID.test(source.id) ||
+      typeof source.sourceId !== 'string' || !SAFE_ID.test(source.sourceId) ||
+      !safeInteger(source.version, 1, 1_000_000) ||
+      typeof source.text !== 'string' || !source.text.isWellFormed() ||
+      source.text.length > limits.maxDocumentTextCodeUnits ||
+      !safeInteger(source.pageCount, 1, 1000) || !safeInteger(source.createdAt, 0) ||
+      source.id !== reference.documentId || source.sourceId !== reference.sourceId ||
       source.version !== reference.version || source.sha256 !== reference.sha256 ||
       !HASH.test(source.sha256) || typeof source.fileName !== 'string' ||
       !source.fileName || source.fileName.length > 255 ||
       /[/\\\u0000-\u001f\u007f]/u.test(source.fileName) ||
       !['txt', 'markdown', 'html', 'pdf', 'docx'].includes(source.format) ||
       !Array.isArray(source.chunks) || source.chunks.length < 1 ||
-      source.chunks.length > limits.maxChunksPerDocument ||
-      Object.keys(source.chunks).length !== source.chunks.length) fail('INVALID_SOURCE');
-  const chunks = source.chunks.map((value, position) => {
-    const chunk = exactObject(value, [
-      'index', 'sourceId', 'fileName', 'page', 'startOffset', 'endOffset', 'sha256', 'text',
-    ], undefined, 'INVALID_SOURCE');
-    if (chunk.index !== position || chunk.sourceId !== source.sourceId ||
-        chunk.fileName !== source.fileName ||
-        !(chunk.page === null || safeInteger(chunk.page, 1)) ||
-        !safeInteger(chunk.startOffset, 0) || !safeInteger(chunk.endOffset, 1) ||
-        chunk.startOffset >= chunk.endOffset || typeof chunk.text !== 'string' ||
-        !chunk.text.isWellFormed() || !chunk.text.trim() ||
-        chunk.sha256 !== source.sha256) fail('INVALID_SOURCE');
-    return Object.freeze({ ...chunk });
-  });
+      source.chunks.length > limits.maxChunksPerDocument) fail('INVALID_SOURCE');
+  const chunks = dataArray(source.chunks, limits.maxChunksPerDocument, 'INVALID_SOURCE')
+    .map((value, position) => {
+      const chunk = exactObject(value, [
+        'index', 'sourceId', 'fileName', 'page', 'startOffset', 'endOffset', 'sha256', 'text',
+      ], undefined, 'INVALID_SOURCE');
+      if (chunk.index !== position || chunk.sourceId !== source.sourceId ||
+          chunk.fileName !== source.fileName ||
+          !(chunk.page === null || safeInteger(chunk.page, 1, source.pageCount)) ||
+          !safeInteger(chunk.startOffset, 0) || !safeInteger(chunk.endOffset, 1) ||
+          chunk.startOffset >= chunk.endOffset || chunk.endOffset > source.text.length ||
+          typeof chunk.text !== 'string' || !chunk.text.isWellFormed() ||
+          chunk.text.length > limits.maxChunkCodeUnits || !chunk.text.trim() ||
+          source.text.slice(chunk.startOffset, chunk.endOffset) !== chunk.text ||
+          chunk.sha256 !== source.sha256) fail('INVALID_SOURCE');
+      return Object.freeze({ ...chunk });
+    });
+  let previousOffset = -1;
+  let previousPage = 0;
+  for (const chunk of chunks) {
+    if (chunk.startOffset <= previousOffset ||
+        chunk.page !== null && chunk.page < previousPage) fail('INVALID_SOURCE');
+    previousOffset = chunk.startOffset;
+    if (chunk.page !== null) previousPage = chunk.page;
+  }
   return Object.freeze({
     id: source.id,
     sourceId: source.sourceId,
@@ -222,6 +256,10 @@ function digest(value) {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+function modelKey(modelId, modelVersion) {
+  return `${modelId}\0${modelVersion}`;
+}
+
 function operationErrorCode(error) {
   return error instanceof RagLifecycleError ? error.code :
     ERROR_CODE.test(error?.code ?? '') ? error.code : 'PROCESSING_FAILED';
@@ -242,6 +280,7 @@ export function createRagLifecycleService(options) {
       typeof repository.activateGeneration !== 'function' ||
       typeof repository.discardGeneration !== 'function' ||
       typeof repository.deleteDocument !== 'function' ||
+      typeof repository.getDocumentStatus !== 'function' ||
       typeof repository.getStats !== 'function' ||
       typeof loadDocument !== 'function' || typeof authorize !== 'function') {
     fail('INVALID_CONFIGURATION');
@@ -251,8 +290,9 @@ export function createRagLifecycleService(options) {
   const models = new Map();
   for (const rawModel of modelsInput) {
     const model = validateModel(rawModel);
-    if (models.has(model.modelId)) fail('INVALID_CONFIGURATION');
-    models.set(model.modelId, model);
+    const key = modelKey(model.modelId, model.modelVersion);
+    if (models.has(key)) fail('INVALID_CONFIGURATION');
+    models.set(key, model);
   }
   const limits = validateLimits(config.limits);
   const clock = config.clock ?? Date.now;
@@ -329,7 +369,7 @@ export function createRagLifecycleService(options) {
   async function schedule(rawInput, type) {
     const input = exactObject(rawInput, [
       'cookieHeader', 'tenantId', 'requestId', 'documentId', 'sourceId',
-      'version', 'sha256', 'idempotencyKey', 'modelId',
+      'version', 'sha256', 'idempotencyKey', 'modelId', 'modelVersion',
     ], type === 'delete'
       ? ['cookieHeader', 'tenantId', 'requestId', 'documentId', 'idempotencyKey']
       : ['cookieHeader', 'tenantId', 'requestId', 'documentId', 'sourceId',
@@ -345,9 +385,14 @@ export function createRagLifecycleService(options) {
         !SAFE_ID.test(input.sourceId) || !safeInteger(input.version, 1) ||
         typeof input.sha256 !== 'string' || !HASH.test(input.sha256))) fail('INVALID_INPUT');
     input.documentId = input.documentId.toLowerCase();
-    const model = type === 'delete' ? undefined :
-      models.get(input.modelId ?? models.keys().next().value);
-    if (type !== 'delete' && !model) fail('UNKNOWN_MODEL');
+    const matchingModels = type === 'delete' ? [] :
+      input.modelId === undefined && input.modelVersion === undefined
+        ? [models.values().next().value]
+        : [...models.values()].filter(model =>
+          (input.modelId === undefined || input.modelId === model.modelId) &&
+          (input.modelVersion === undefined || input.modelVersion === model.modelVersion));
+    const model = type === 'delete' ? undefined : matchingModels[0];
+    if (type !== 'delete' && matchingModels.length !== 1) fail('UNKNOWN_MODEL');
     const context = await resolveContext(input);
     await canPerform(context, input, type);
     const payloadHash = digest(JSON.stringify({
@@ -393,8 +438,9 @@ export function createRagLifecycleService(options) {
       return next;
     });
 
+    let job;
     try {
-      const job = await jobs.enqueue({
+      job = await jobs.enqueue({
         cookieHeader: input.cookieHeader,
         tenantId: context.tenantId,
         requestId: context.requestId,
@@ -403,29 +449,29 @@ export function createRagLifecycleService(options) {
         payload: { operationId },
         maxAttempts: limits.maxAttempts,
       });
-      if (type === 'delete' && await isCurrent(context, operation)) {
-        try {
-          await repository.deleteDocument({
-            tenantContext: context,
-            documentId: operation.documentId,
-            fencingToken: operation.fencingToken,
-            operationId: operation.id,
-          });
-        } catch {
-          fail('DELETE_PENDING');
-        }
-      }
-      return Object.freeze({
-        contractVersion: CONTRACT_VERSION,
-        operationId,
-        jobId: job.id,
-        type: operation.type,
-        status: operation.status,
-        fencingToken: operation.fencingToken,
-      });
     } catch {
       fail('JOB_QUEUE_UNAVAILABLE');
     }
+    if (type === 'delete' && await isCurrent(context, operation)) {
+      try {
+        await repository.deleteDocument({
+          tenantContext: context,
+          documentId: operation.documentId,
+          fencingToken: operation.fencingToken,
+          operationId: operation.id,
+        });
+      } catch {
+        fail('DELETE_PENDING');
+      }
+    }
+    return Object.freeze({
+      contractVersion: CONTRACT_VERSION,
+      operationId,
+      jobId: job.id,
+      type: operation.type,
+      status: operation.status,
+      fencingToken: operation.fencingToken,
+    });
   }
 
   async function isCurrent(context, operation) {
@@ -473,7 +519,7 @@ export function createRagLifecycleService(options) {
           operationId: operation.id,
         });
       } else {
-        const model = models.get(operation.modelId);
+        const model = models.get(modelKey(operation.modelId, operation.modelVersion));
         if (!model || model.modelVersion !== operation.modelVersion ||
             model.fingerprint !== operation.fingerprint) fail('UNKNOWN_MODEL');
         let loaded;
@@ -515,12 +561,11 @@ export function createRagLifecycleService(options) {
           } catch {
             fail('EMBEDDING_UNAVAILABLE');
           }
-          if (!Array.isArray(rawVectors) || rawVectors.length !== chunks.length ||
-              Object.keys(rawVectors).length !== rawVectors.length) fail('INVALID_EMBEDDING');
+          const vectors = dataArray(rawVectors, limits.batchSize, 'INVALID_EMBEDDING');
+          if (vectors.length !== chunks.length) fail('INVALID_EMBEDDING');
           const indexedChunks = chunks.map((chunk, index) => {
-            const vector = rawVectors[index];
-            if (!Array.isArray(vector) || vector.length !== model.dimensions ||
-                Object.keys(vector).length !== vector.length ||
+            const vector = dataArray(vectors[index], model.dimensions, 'INVALID_EMBEDDING');
+            if (vector.length !== model.dimensions ||
                 vector.some(value => typeof value !== 'number' || !Number.isFinite(value))) {
               fail('INVALID_EMBEDDING');
             }
@@ -692,6 +737,51 @@ export function createRagLifecycleService(options) {
       const operation = state.operations[input.operationId];
       if (!operation) fail('OPERATION_NOT_FOUND');
       return publicOperation(operation);
+    },
+
+    async checkConsistency(rawInput) {
+      const input = exactObject(rawInput, ['cookieHeader', 'tenantId', 'requestId']);
+      if (typeof input.cookieHeader !== 'string' || typeof input.tenantId !== 'string' ||
+          !UUID.test(input.tenantId) || typeof input.requestId !== 'string' ||
+          !SAFE_ID.test(input.requestId)) fail('INVALID_INPUT');
+      const context = await resolveContext(input);
+      const { state } = await readState(context);
+      const mismatches = [];
+      for (const [documentId, record] of Object.entries(state.documents)) {
+        const operation = state.operations[record.operationId];
+        if (!operation || operation.status !== 'succeeded') continue;
+        let actual;
+        try {
+          actual = exactObject(await repository.getDocumentStatus({
+            tenantContext: context,
+            documentId,
+          }), ['fencingToken', 'activeGenerationId'], undefined, 'CORRUPT_INDEX_STATUS');
+        } catch (error) {
+          if (error instanceof RagLifecycleError) throw error;
+          fail('INDEX_UNAVAILABLE');
+        }
+        if (!safeInteger(actual.fencingToken, 0) ||
+            !(actual.activeGenerationId === null ||
+              typeof actual.activeGenerationId === 'string' && SAFE_ID.test(actual.activeGenerationId))) {
+          fail('CORRUPT_INDEX_STATUS');
+        }
+        const expectedGenerationId = operation.type === 'delete' ? null : operation.id;
+        if (actual.fencingToken !== record.fencingToken ||
+            actual.activeGenerationId !== expectedGenerationId) {
+          mismatches.push(Object.freeze({
+            documentId,
+            expectedGenerationId,
+            actualGenerationId: actual.activeGenerationId,
+          }));
+        }
+      }
+      return Object.freeze({
+        contractVersion: CONTRACT_VERSION,
+        consistent: mismatches.length === 0,
+        checkedDocuments: Object.values(state.documents)
+          .filter(record => state.operations[record.operationId]?.status === 'succeeded').length,
+        mismatches: Object.freeze(mismatches),
+      });
     },
 
     async stats(rawInput) {

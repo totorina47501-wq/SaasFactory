@@ -52,14 +52,15 @@ function makeDocument({
     createdAt: 1,
     chunks: chunks.map((text, index) => {
       const startOffset = offset;
-      offset += text.length;
+      const endOffset = offset + text.length;
+      offset = endOffset + (index < chunks.length - 1 ? 1 : 0);
       return {
         index,
         sourceId,
         fileName: 'guide.txt',
         page: null,
         startOffset,
-        endOffset: offset,
+        endOffset,
         sha256,
         text,
       };
@@ -170,6 +171,13 @@ function createRepository() {
         caches: active.reduce((count, document) => count + document.active.cacheEntries, 0),
       };
     },
+    async getDocumentStatus({ tenantContext, documentId }) {
+      const document = documents.get(`${tenantContext.tenantId}:${documentId}`);
+      return {
+        fencingToken: document?.fencingToken ?? 0,
+        activeGenerationId: document?.active?.generationId ?? null,
+      };
+    },
   };
 }
 
@@ -199,6 +207,7 @@ async function setup(t, {
   models = [createModel()],
   limits = { batchSize: 2 },
   beforeBatch,
+  beforeDelete,
   authorize = async () => true,
 } = {}) {
   let now = 1000;
@@ -225,6 +234,10 @@ async function setup(t, {
       async writeBatch(input) {
         await beforeBatch?.(input);
         return repository.writeBatch(input);
+      },
+      async deleteDocument(input) {
+        await beforeDelete?.(input);
+        return repository.deleteDocument(input);
       },
     },
     loadDocument: async ({ documentId, version }) => {
@@ -290,12 +303,12 @@ test('indexes documents in resumable idempotent batches and retains source prove
     ...TENANT_INPUT,
     operationId: queued.operationId,
   });
-  assert.equal(operation.status, 'succeeded');
+  assert.equal(operation.status, 'succeeded', operation.lastError);
   assert.equal(operation.processedBatches, 2);
   const active = fixture.repository.documents.get(`${TENANT_ID}:${DOCUMENT_ID}`).active;
   assert.equal(active.chunks.length, 3);
   assert.equal(active.chunks[0].startOffset, 0);
-  assert.equal(active.chunks[2].endOffset, 11);
+  assert.equal(active.chunks[2].endOffset, 13);
   assert.deepEqual(active.provenance.map(chunk => chunk.sha256), [SHA, SHA, SHA]);
   assert.equal(active.model.modelVersion, '1.0.0');
   assert.deepEqual(await fixture.service.stats(TENANT_INPUT), {
@@ -399,7 +412,6 @@ test('model rotation activates a complete new generation without mixing versions
   const firstModel = createModel('1.0.0');
   const secondModel = {
     ...createModel('2.0.0'),
-    modelId: 'test/rotated',
     fingerprint: '3'.repeat(64),
   };
   const fixture = await setup(t, { models: [firstModel, secondModel] });
@@ -408,6 +420,7 @@ test('model rotation activates a complete new generation without mixing versions
   const rotation = await fixture.service.reindexDocument(indexInput({
     idempotencyKey: 'reindex-guide-model-2',
     modelId: secondModel.modelId,
+    modelVersion: secondModel.modelVersion,
   }));
   await fixture.service.runOnce();
 
@@ -432,4 +445,95 @@ test('refuses corrupt durable state rather than silently rebuilding it', async t
     version: 1,
   });
   await expectCode(fixture.service.stats(TENANT_INPUT), 'CORRUPT_STATE');
+});
+
+test('rejects source chunks whose stored provenance offsets no longer match their text', async t => {
+  const document = makeDocument();
+  document.chunks[1].startOffset += 1;
+  const fixture = await setup(t, { documents: [document] });
+  const queued = await fixture.service.indexDocument(indexInput());
+  await fixture.service.runOnce();
+  const operation = await fixture.service.getOperation({
+    ...TENANT_INPUT,
+    operationId: queued.operationId,
+  });
+  assert.equal(operation.status, 'queued');
+  assert.equal(operation.lastError, 'INVALID_SOURCE');
+  assert.deepEqual(await fixture.service.stats(TENANT_INPUT), {
+    contractVersion: 1,
+    documents: 0,
+    chunks: 0,
+    vectors: 0,
+    caches: 0,
+    pendingOperations: 1,
+    failedOperations: 0,
+    recordedErrors: 1,
+  });
+});
+
+test('rejects reordered chunks even when each chunk text still matches its offsets', async t => {
+  const document = makeDocument();
+  Object.assign(document.chunks[1], {
+    startOffset: 0,
+    endOffset: 3,
+    text: 'one',
+  });
+  const fixture = await setup(t, { documents: [document] });
+  const queued = await fixture.service.indexDocument(indexInput());
+  await fixture.service.runOnce();
+  const operation = await fixture.service.getOperation({
+    ...TENANT_INPUT,
+    operationId: queued.operationId,
+  });
+  assert.equal(operation.lastError, 'INVALID_SOURCE');
+  assert.equal((await fixture.service.stats(TENANT_INPUT)).vectors, 0);
+});
+
+test('reports inconsistencies between completed lifecycle state and the active index', async t => {
+  const fixture = await setup(t);
+  await fixture.service.indexDocument(indexInput());
+  await fixture.service.runOnce();
+  const repositoryDocument = fixture.repository.documents.get(`${TENANT_ID}:${DOCUMENT_ID}`);
+  repositoryDocument.active = null;
+  const result = await fixture.service.checkConsistency(TENANT_INPUT);
+  assert.equal(result.consistent, false);
+  assert.equal(result.checkedDocuments, 1);
+  assert.deepEqual(result.mismatches, [{
+    documentId: DOCUMENT_ID,
+    expectedGenerationId: Object.keys(
+      fixture.store.values.get(`${TENANT_ID}:rag-lifecycle-v1/state`).value.operations,
+    )[0],
+    actualGenerationId: null,
+  }]);
+});
+
+test('reports immediate repository deletion failures separately and lets the queued job recover', async t => {
+  let firstDelete = true;
+  const fixture = await setup(t, {
+    beforeDelete: async () => {
+      if (firstDelete) {
+        firstDelete = false;
+        throw new Error('transaction unavailable');
+      }
+    },
+  });
+  await fixture.service.indexDocument(indexInput());
+  await fixture.service.runOnce();
+  await expectCode(fixture.service.deleteDocument({
+    ...TENANT_INPUT,
+    documentId: DOCUMENT_ID,
+    idempotencyKey: 'delete-after-repository-failure',
+  }), 'DELETE_PENDING');
+  assert.equal((await fixture.service.stats(TENANT_INPUT)).documents, 1);
+  assert.equal(await fixture.service.runOnce(), true);
+  assert.deepEqual(await fixture.service.stats(TENANT_INPUT), {
+    contractVersion: 1,
+    documents: 0,
+    chunks: 0,
+    vectors: 0,
+    caches: 0,
+    pendingOperations: 0,
+    failedOperations: 0,
+    recordedErrors: 0,
+  });
 });

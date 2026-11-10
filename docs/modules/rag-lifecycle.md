@@ -28,11 +28,14 @@ Le stockage d'état utilise la clé tenant-scoped constante
 utiliser Tenancy et une file locale durable séparée. Le payload du job ne contient
 que l'identifiant d'opération ; texte, ACL, cookie, vecteur et secret ne sont pas
 placés dans la file ni dans l'état de cycle de vie.
+La limite Jobs `maxAttempts` doit être au moins celle de `rag-lifecycle`.
 
 `loadDocument({tenantContext, documentId, version, signal})` retourne le document
 déjà persisté par Ingestion ainsi que `metadata` et l'ACL courante. Identifiant,
 source, version, SHA-256, chunks, offsets et provenance sont validés avant
-traitement. Le corps du document reste en mémoire pendant les lots uniquement.
+traitement, avec offsets strictement croissants et offsets de chunk cohérents
+avec le texte source. Le corps du document reste en mémoire pendant les lots
+uniquement.
 Les modèles doivent être explicitement installés et inscrits dans `models`.
 Chaque descripteur déclare version, empreinte SHA-256, dimensions, licence,
 runtime `local` ou `test` et CPU ; l'embedder doit retourner uniquement des
@@ -58,6 +61,9 @@ facultatif. Il implémente :
   L'opération est idempotente et refuse une clôture périmée.
 - `getStats({tenantContext})` : retourne exactement les entiers non négatifs
   `{documents, chunks, vectors, caches}`.
+- `getDocumentStatus({tenantContext, documentId})` : retourne exactement
+  `{fencingToken, activeGenerationId}` ; l'ID actif vaut `null` si le document
+  n'est pas indexé.
 
 Le chercheur doit lire la même génération active et vérifier l'ACL depuis cette
 même source de vérité. Les lecteurs concurrents et la suppression doivent être
@@ -69,8 +75,9 @@ Ce module ne prétend pas rendre transactionnel un adaptateur qui ne l'est pas.
 ## API et reprise
 
 - `indexDocument(input)` planifie l'indexation initiale ou la mise à jour d'une
-  nouvelle version/source. `modelId` est facultatif et sélectionne par défaut
-  le premier modèle configuré.
+  nouvelle version/source. Sans sélection, le premier modèle configuré est
+  utilisé ; pour choisir une version précise, fournir `modelId` et
+  `modelVersion`.
 - `reindexDocument(input)` planifie une nouvelle génération complète, notamment
   pour une version/empreinte/dimension de modèle différente. L'ancienne
   génération reste active jusqu'à la bascule atomique ; aucun mélange de
@@ -78,13 +85,19 @@ Ce module ne prétend pas rendre transactionnel un adaptateur qui ne l'est pas.
 - `deleteDocument({cookieHeader, tenantId, requestId, documentId,
   idempotencyKey})` enregistre une clôture supérieure, enfile le job, puis
   applique immédiatement le tombstone et la purge atomique. Le job persistant
-  répète l'opération idempotente après redémarrage ou panne.
+  répète l'opération idempotente après redémarrage ou panne. Si la purge
+  transactionnelle immédiate échoue, l'appel renvoie `DELETE_PENDING` mais
+  conserve le job ; répéter la demande avec la même clé récupère le même job.
 - `runOnce()` réclame au plus un job `rag.lifecycle`. Aucun job ne démarre à la
   création du service ou à l'enqueue ; un worker doit appeler explicitement
   `runOnce()` ou orchestrer les workers Jobs.
 - `getOperation(...)` expose un résumé sans contenu, payload ni message
   technique. `stats(...)` agrège les compteurs du dépôt, opérations en attente,
   échecs et erreurs enregistrées.
+- `checkConsistency(...)` compare les opérations terminales du cycle de vie à
+  la clôture et génération actives du dépôt. Les écarts sont retournés sans
+  réparation destructive ; un opérateur doit relancer une indexation ou
+  suppression idempotente après en avoir identifié la cause.
 
 Chaque opération a une clé d'idempotence unique par tenant. Un retry avec le
 même contenu retourne le même job ; la réutilisation de la clé avec un contenu
@@ -102,16 +115,18 @@ Erreurs stables : `INVALID_INPUT`, `INVALID_CONFIGURATION`,
 `EMBEDDING_UNAVAILABLE`, `SOURCE_UNAVAILABLE`, `JOB_QUEUE_UNAVAILABLE`,
 `DELETE_PENDING`, `OPERATION_NOT_FOUND`, `IDEMPOTENCY_CONFLICT`,
 `OPERATION_LIMIT`, `CORRUPT_STATE`, `STORAGE_UNAVAILABLE`, `STORAGE_BUSY`,
-`INVALID_JOB_PAYLOAD`, `INDEX_UNAVAILABLE`, `CORRUPT_INDEX_STATS` et
-`PROCESSING_FAILED`. L'erreur publique conserve un code, jamais un message du
-document ou d'un fournisseur.
+`INVALID_JOB_PAYLOAD`, `INDEX_UNAVAILABLE`, `CORRUPT_INDEX_STATS`,
+`CORRUPT_INDEX_STATUS` et `PROCESSING_FAILED`. L'erreur publique conserve un
+code, jamais un message du document ou d'un fournisseur.
 
 ## Budgets, tests et rollback
 
 | Budget | Défaut | Maximum |
 | --- | ---: | ---: |
 | Chunks par lot | 32 | 256 |
+| Caractères UTF-16 par chunk | 10 000 | 100 000 |
 | Chunks par document | 5 000 | 100 000 |
+| Caractères UTF-16 par document | 2 Mi | 16 Mi |
 | Opérations conservées par tenant | 10 000 | 100 000 |
 | Reprises CAS d'état | 3 | 10 |
 | Tentatives Jobs par opération | 3 | 10 |
